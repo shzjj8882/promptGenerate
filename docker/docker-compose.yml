@@ -1,0 +1,140 @@
+# AILY 项目 Docker Compose 配置
+# 包含：PostgreSQL、Redis、后端服务、前端应用、Nginx 反向代理
+# 使用 Nginx 作为统一入口，支持 SSE 流式传输
+# 使用方式: docker-compose up -d
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: aily_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-aily_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"  # 映射端口到本地，方便本地开发环境连接
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aily_network
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: aily_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"  # 映射端口到本地，方便本地开发环境连接
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aily_network
+
+  # 后端服务（不暴露端口，通过 Nginx 代理访问）
+  service:
+    build:
+      context: ..
+      dockerfile: docker/service/Dockerfile
+    container_name: aily_service
+    environment:
+      # 应用配置
+      DEBUG: ${DEBUG:-False}
+      ENV: ${ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-here-change-in-production}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      
+      # 数据库配置（使用服务名）
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-aily_db}
+      
+      # Redis 配置（使用服务名）
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      
+      # CORS 配置（Nginx 统一入口，无需跨域）
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      
+      # DeepSeek API 配置
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_BASE: ${DEEPSEEK_API_BASE:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      
+      # API Key（可选）
+      API_KEY: ${API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
+      interval: 60s
+      timeout: 5s
+      retries: 2
+      start_period: 40s
+    networks:
+      - aily_network
+    restart: unless-stopped
+
+  # 前端应用（不暴露端口，通过 Nginx 代理访问）
+  app:
+    build:
+      context: ..
+      dockerfile: docker/app/Dockerfile
+      args:
+        # 构建时注入部署模式
+        DEPLOYMENT_MODE: docker-nginx
+        # Docker Nginx 模式：不使用 rewrites，通过 Nginx 代理
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
+    container_name: aily_app
+    environment:
+      NODE_ENV: production
+      # 部署模式：docker-nginx 表示使用 Nginx 代理，不使用 Next.js rewrites
+      DEPLOYMENT_MODE: docker-nginx
+    depends_on:
+      - service
+    networks:
+      - aily_network
+    restart: unless-stopped
+
+  # Nginx 反向代理（统一入口，支持 SSE 流式传输）
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: aily_nginx
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      - app
+      - service
+    networks:
+      - aily_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  aily_network:
+    driver: bridge
