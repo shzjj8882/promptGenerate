@@ -44,6 +44,12 @@ ENV/
 *.db
 *.sqlite
 
+# 测试
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
 # 操作系统
 .DS_Store
 Thumbs.db

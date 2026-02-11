@@ -133,13 +133,35 @@ const MenuItemComponent = ({ item, pathname, collapsed, level = 0 }: {
   );
 };
 
+/** 按后端接口权限过滤菜单：模型管理需 team_admin；团队认证为按钮非菜单，过滤 menu:config:team_auth */
+function filterMenuTreeByBackendPermission(
+  items: MenuItem[],
+  user: { is_superuser?: boolean; is_team_admin?: boolean } | null
+): MenuItem[] {
+  return items
+    .filter((item) => item.code !== "menu:config:team_auth") // 团队认证是按钮权限，非菜单
+    .filter((item) => {
+      if (item.code === "menu:config:models" && (!user || !user.is_superuser && !user.is_team_admin))
+        return false; // 模型管理需 team_admin
+      return true;
+    })
+    .map((item) => {
+      if (item.children?.length) {
+        const filtered = filterMenuTreeByBackendPermission(item.children, user);
+        return { ...item, children: filtered };
+      }
+      return item;
+    });
+}
+
 /** 仅客户端渲染的侧栏导航，由 layout 通过 dynamic(ssr:false) 引入，避免 hydration 不匹配 */
 const DashboardNavImpl = () => {
   const pathname = usePathname();
   const collapsed = uiStore.sidebarCollapsed;
   // 直接从 store 读取菜单树（MobX 会自动响应式更新）
-  const menuTree = userStore.menuTree;
-  const loading = userStore.menuTreeLoading || (!userStore.user && menuTree.length === 0);
+  const rawMenuTree = userStore.menuTree;
+  const menuTree = filterMenuTreeByBackendPermission(rawMenuTree, userStore.user);
+  const loading = userStore.menuTreeLoading || (!userStore.user && rawMenuTree.length === 0);
 
   if (loading) {
     return (

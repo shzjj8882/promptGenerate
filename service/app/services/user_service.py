@@ -143,6 +143,18 @@ class UserService:
         except Exception:
             await db.rollback()
             raise
+        
+        # 失效该用户的权限缓存，确保 is_team_admin / team_code 等变更后立刻生效
+        try:
+            from app.core.database import get_redis_optional
+            from app.services.rbac_service import RoleService
+            redis_client = await get_redis_optional()
+            if redis_client:
+                await RoleService.invalidate_user_perm_cache(redis_client, user.id)
+        except Exception:
+            # 缓存相关错误不影响主流程
+            pass
+        
         return user
     
     @staticmethod

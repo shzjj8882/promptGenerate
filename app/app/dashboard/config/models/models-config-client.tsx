@@ -30,6 +30,7 @@ import {
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import {
   Table,
   TableBody,
@@ -494,9 +495,8 @@ function ModelsConfigClientImpl() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="api_key">API 密钥</Label>
-              <Input
+              <PasswordInput
                 id="api_key"
-                type="password"
                 placeholder="留空则使用环境变量配置"
                 value={formData.api_key || ""}
                 onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
@@ -609,9 +609,8 @@ function ModelsConfigClientImpl() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="edit-api_key">API 密钥</Label>
-              <Input
+              <PasswordInput
                 id="edit-api_key"
-                type="password"
                 placeholder="留空则使用环境变量配置"
                 value={formData.api_key || ""}
                 onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}

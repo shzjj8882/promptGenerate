@@ -50,15 +50,19 @@ class Permission(Base):
     """权限模型"""
     __tablename__ = "permissions"
 
-    TYPE_MENU = "menu"
-    TYPE_API = "api"
+    TYPE_MENU = "menu"      # 菜单（路由级，控制侧栏入口）
+    TYPE_API = "api"        # 接口
+    TYPE_BUTTON = "button"  # 按钮（控制页面上按钮显隐）
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False, unique=True, index=True)  # 权限名称
-    code = Column(String, nullable=False, unique=True, index=True)  # 权限代码（唯一标识，如：tenant:create）
-    resource = Column(String, nullable=False, index=True)  # 资源（如：tenant, prompt, rag）
-    action = Column(String, nullable=False, index=True)  # 操作（如：create, read, update, delete）
-    type = Column(String(20), default=TYPE_API, nullable=False)  # 权限类型：menu=菜单权限，api=接口权限
+    code = Column(String, nullable=False, unique=True, index=True)  # 权限代码（唯一标识）
+    resource = Column(String, nullable=False, index=True)  # 资源（如：tenant, prompts, rbac）
+    action = Column(String, nullable=False, index=True)  # 操作（如：create, list, menu_list）
+    type = Column(String(20), default=TYPE_API, nullable=False)  # 权限类型：menu=菜单, api=接口, button=按钮
+    type_name = Column(String(50), nullable=True)  # 类型名称，用于展示（如：菜单权限、接口权限、按钮权限）
+    group_name = Column(String(50), nullable=True)  # 分组名称，用于前端 groupBy（如：租户管理、提示词管理）
+    is_system_admin_only = Column(Boolean, default=False, nullable=False)  # 是否仅系统管理员可见
     description = Column(Text, nullable=True)  # 权限描述
     parent_id = Column(String, ForeignKey("permissions.id", ondelete="SET NULL"), nullable=True, index=True)  # 父权限ID（用于菜单层级）
     sort_order = Column(Integer, default=0, nullable=False, index=True)  # 排序顺序（用于菜单排序）

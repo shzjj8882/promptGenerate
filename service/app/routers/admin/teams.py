@@ -7,7 +7,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.core.response import ResponseModel
 from app.core.auth import get_current_user
-from app.core.permissions import require_superuser
+from app.core.permissions import require_superuser, require_permission
 from app.services.team_service import TeamService
 from app.schemas.team import TeamCreate, TeamUpdate, TeamResponse
 from app.schemas.user import UserResponse
@@ -198,12 +198,20 @@ async def get_my_team(
     )
 
 
+async def _require_team_reset_authcode(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """要求具备 team:reset_authcode 接口权限"""
+    return await require_permission("team:reset_authcode", current_user, db)
+
+
 @router.post("/teams/my-team/reset-authcode", summary="重置当前用户的团队认证码", tags=["管理接口 > 团队管理"])
 async def reset_my_team_authcode(
     db: AsyncSession = Depends(get_db),
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(_require_team_reset_authcode),
 ):
-    """重置当前登录用户所属团队的 API 认证码（需要认证，只能重置自己团队的认证码）"""
+    """重置当前登录用户所属团队的 API 认证码（需要 team:reset_authcode 权限，只能重置自己团队的认证码）"""
     if not current_user.team_code:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

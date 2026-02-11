@@ -49,7 +49,13 @@ const PATH_TO_MENU_CODE: Record<string, string> = {
   "/dashboard/rbac/roles": "menu:rbac:roles:list",
   "/dashboard/rbac/user-roles": "menu:rbac:user_roles:list",
   "/dashboard/rbac/menus": "menu:rbac:menus:list",
-  "/dashboard/config": "team_admin",
+  // 配置中心子路径：按具体菜单权限校验（支持普通用户通过角色访问）
+  "/dashboard/config/scenes": "menu:config:scenes",
+  "/dashboard/config/placeholders": "menu:config:placeholders",
+  "/dashboard/config/tables": "menu:config:tables",
+  "/dashboard/config/models": "team_admin", // 模型管理接口需团队管理员或超管，与后端 require_team_admin_or_superuser 一致
+  "/dashboard/config/menus": "menu:config:menus",
+  "/dashboard/config": "config_any", // 配置中心根路径（redirect 到 scenes），需有任一配置相关权限
   "/dashboard/tables": "menu:tables:list",
 };
 
@@ -60,10 +66,18 @@ function getRequiredMenuCode(pathname: string): string | null {
   return null;
 }
 
+const CONFIG_MENU_CODES = ["menu:config", "menu:config:scenes", "menu:config:placeholders", "menu:config:tables", "menu:config:models", "menu:config:menus"];
+
 function userHasMenuCode(user: { is_superuser?: boolean; is_team_admin?: boolean; menu_permission_codes?: string[] } | null, code: string): boolean {
   if (!user) return false;
   if (code === "superuser") return user.is_superuser === true;
   if (code === "team_admin") return user.is_superuser === true || user.is_team_admin === true;
+  // 配置中心任一子权限（/dashboard/config 根路径 redirect 到 scenes，需有任一配置权限即可）
+  if (code === "config_any") {
+    if (user.is_superuser) return false;
+    if (user.is_team_admin) return true;
+    return CONFIG_MENU_CODES.some((c) => user.menu_permission_codes?.includes(c));
+  }
   
   // 团队管理菜单（menu:team* 或 menu:teams*）仅系统管理员可见
   if (code.startsWith("menu:team") || code.startsWith("menu:teams")) {

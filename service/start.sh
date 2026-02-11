@@ -26,6 +26,10 @@ fi
 echo "初始化数据库..."
 python3 scripts/init_db.py
 
+# 预检查：验证 RBAC/菜单 迁移脚本能否全部成功（避免启动时报错）
+echo "预检查迁移脚本..."
+PYTHONPATH=. python3 scripts/verify_startup_migrations.py || exit 1
+
 # 启动服务
 echo "启动服务..."
 uvicorn main:app --reload --host 0.0.0.0 --port 8000

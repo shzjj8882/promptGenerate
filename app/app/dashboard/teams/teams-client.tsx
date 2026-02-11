@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -888,9 +889,8 @@ function TeamsClientImpl({
 
             <div className="space-y-2">
               <Label htmlFor="member-password">密码 *</Label>
-              <Input
+              <PasswordInput
                 id="member-password"
-                type="password"
                 placeholder="请输入密码（至少6个字符）"
                 {...registerMember("password")}
                 className={memberErrors.password ? "border-destructive" : ""}

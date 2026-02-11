@@ -64,8 +64,8 @@ async def migrate():
         for code, name, resource, action, description in MENU_PERMISSIONS:
             pid = str(uuid.uuid4())
             await conn.execute("""
-                INSERT INTO permissions (id, name, code, resource, action, type, description, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'menu', $6, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'menu', $6, NULL, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
             """, pid, name, code, resource, action, description or "")
         print(f"✅ 菜单权限种子已写入（路由 {len(MENU_ROUTE_PERMISSIONS)} 条 + 按钮 {len(MENU_BUTTON_PERMISSIONS)} 条，若 code 已存在则跳过）")

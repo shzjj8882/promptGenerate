@@ -13,6 +13,8 @@ export const MENU_BUTTON_PERMISSIONS = {
   role: { create: "menu:rbac:role:create", update: "menu:rbac:role:update", delete: "menu:rbac:role:delete" },
   userRole: { assign: "menu:rbac:user_role:assign" },
   tables: { create: "menu:tables:create", update: "menu:tables:update", delete: "menu:tables:delete" },
+  /** 团队：重置本团队认证码（控制台 Dashboard） */
+  team: { resetAuthcode: "menu:team:reset_authcode" },
 } as const;
 
 /**
@@ -56,6 +58,10 @@ export const BUTTON_PERMISSIONS = {
     update: "multi_dimension_tables:update",
     delete: "multi_dimension_tables:delete",
   },
+  /** 团队：重置本团队认证码 */
+  team: {
+    resetAuthcode: "team:reset_authcode",
+  },
 } as const;
 
 export type ButtonPermissionCode = string;
@@ -94,8 +100,8 @@ export function hasMenuButtonPermission(
 ): boolean {
   if (!user) return false;
   
-  // 团队管理相关的按钮权限仅系统管理员可见
-  if (code.startsWith("menu:team") || code.startsWith("menu:teams")) {
+  // 团队管理相关的按钮权限仅系统管理员可见（menu:team:reset_authcode 为例外，团队成员可分配）
+  if ((code.startsWith("menu:team") || code.startsWith("menu:teams")) && code !== "menu:team:reset_authcode") {
     return user.is_superuser === true;
   }
   

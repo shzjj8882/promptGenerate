@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Tenant } from "@/lib/api/tenants";
 
@@ -107,9 +108,8 @@ export const TenantFormDialog = memo(function TenantFormDialog({
 
           <div className="space-y-2">
             <Label htmlFor="app_secret">应用密钥</Label>
-            <Input
+            <PasswordInput
               id="app_secret"
-              type="password"
               placeholder="请输入应用密钥（可选）"
               {...register("app_secret")}
             />

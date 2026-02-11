@@ -40,13 +40,14 @@ async def migrate():
             return
         
         inserted = 0
-        for code, name, resource, action, description in RBAC_SUBMENUS:
+        for idx, (code, name, resource, action, description) in enumerate(RBAC_SUBMENUS):
             pid = str(uuid.uuid4())
+            sort_order = idx + 1
             result = await conn.execute("""
-                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'menu', $6, $7, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'menu', $6, $7, $8, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
-            """, pid, name, code, resource, action, description or "", parent_menu_id)
+            """, pid, name, code, resource, action, description or "", parent_menu_id, sort_order)
             if result == "INSERT 0 1":
                 inserted += 1
                 print(f"✅ 创建子菜单权限: {name} ({code})")

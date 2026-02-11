@@ -16,6 +16,7 @@ from app.core.config import settings
 
 
 # 配置中心菜单权限（父菜单）
+# 注：menu:config:tables 已迁移为独立的 menu:tables:list，若已存在则跳过避免 name 重复
 CONFIG_MENU_PERMISSIONS = [
     # 父菜单：配置中心
     ("menu:config", "配置中心", "config", "menu", "配置中心入口，控制左侧菜单与路由可见", None, 100),
@@ -23,7 +24,7 @@ CONFIG_MENU_PERMISSIONS = [
     ("menu:config:scenes", "场景配置", "config", "menu_list", "场景值配置入口", "menu:config", 101),
     # 子菜单：占位符配置
     ("menu:config:placeholders", "占位符配置", "config", "menu_list", "占位符编辑设计入口", "menu:config", 102),
-    # 子菜单：多维表格
+    # 子菜单：多维表格（若 menu:tables:list 已存在则跳过，避免 ix_permissions_name 冲突）
     ("menu:config:tables", "多维表格", "config", "menu_list", "多维表格配置入口", "menu:config", 103),
 ]
 
@@ -63,8 +64,13 @@ async def migrate():
                 print(f"✅ 创建/更新父菜单: {name} ({code})")
         
         # 第二遍：创建子菜单（使用父菜单的 ID）
+        # 若 menu:tables:list 已存在（多维表格已迁移为独立菜单），则跳过 menu:config:tables，避免 name 重复
+        tables_list_exists = await conn.fetchval("SELECT id FROM permissions WHERE code = 'menu:tables:list'")
         for code, name, resource, action, description, parent_code, sort_order in CONFIG_MENU_PERMISSIONS:
             if parent_code is not None:
+                if code == "menu:config:tables" and tables_list_exists:
+                    print(f"⏭️  跳过 menu:config:tables（多维表格已迁移为独立菜单 menu:tables:list）")
+                    continue
                 # 子菜单
                 parent_id = parent_id_map.get(parent_code)
                 if not parent_id:

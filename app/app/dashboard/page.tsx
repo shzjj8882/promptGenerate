@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { observer } from "mobx-react-lite";
 import { Copy, Check, Key, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,101 +16,42 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { getMyTeam, resetMyTeamAuthcode } from "@/lib/api/teams";
-import { Team } from "@/lib/api/teams";
+import { resetMyTeamAuthcode } from "@/lib/api/teams";
 import { userStore } from "@/store/user-store";
+import { MENU_BUTTON_PERMISSIONS, useHasMenuButtonPermission } from "@/lib/permissions";
 import { logger } from "@/lib/utils/logger";
 import { getCurrentUser } from "@/lib/api/auth";
 
 function DashboardPageImpl() {
-  const [team, setTeam] = useState<Team | null>(null);
-  const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [mounted, setMounted] = useState(false);
-  
-  // 使用 ref 跟踪是否已经请求过，以及上一次的 team_code，避免重复请求
-  const hasFetchedRef = useRef(false);
-  const lastTeamCodeRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // 使用 useMemo 提取 team_code 的字符串值，避免对象引用变化导致的重复渲染
-  const teamCodeValue = useMemo(() => userStore.user?.team_code ?? null, [userStore.user?.team_code]);
-
-  useEffect(() => {
-    if (!mounted) return;
-
-    const currentTeamCode = teamCodeValue;
-    
-    // 如果 team_code 没有变化且已经请求过，则不重复请求
-    if (hasFetchedRef.current && lastTeamCodeRef.current === currentTeamCode) {
-      return;
-    }
-
-    // 只有有团队的用户才需要获取团队信息
-    if (!currentTeamCode) {
-      setLoading(false);
-      setTeam(null);
-      hasFetchedRef.current = false;
-      lastTeamCodeRef.current = undefined;
-      return;
-    }
-
-    // 如果 team_code 发生了变化，才重新请求
-    if (lastTeamCodeRef.current !== currentTeamCode) {
-      // 标记为已请求，记录当前的 team_code
-      hasFetchedRef.current = true;
-      lastTeamCodeRef.current = currentTeamCode;
-
-      const fetchTeam = async () => {
-        try {
-          const teamData = await getMyTeam();
-          setTeam(teamData);
-        } catch (err) {
-          logger.error("获取团队信息失败", err);
-          // 请求失败时重置标记，允许重试
-          hasFetchedRef.current = false;
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      fetchTeam();
-    }
-  }, [mounted, teamCodeValue]); // 依赖 teamCodeValue（字符串值），而不是 userStore.user 对象
-
-  // 使用 useMemo 稳定 team_authcode 的值（仅用于显示，不影响请求）
   const teamAuthcode = useMemo(() => userStore.user?.team_authcode, [userStore.user?.team_authcode]);
-  
-  // 使用 useMemo 稳定 team_code 的值（仅用于显示）
   const teamCode = useMemo(() => userStore.user?.team_code, [userStore.user?.team_code]);
 
   const handleCopyAuthcode = useCallback(async () => {
-    const authcode = team?.authcode || teamAuthcode;
-    if (!authcode) return;
+    if (!teamAuthcode) return;
     try {
-      await navigator.clipboard.writeText(authcode);
+      await navigator.clipboard.writeText(teamAuthcode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       logger.error("复制失败", err);
     }
-  }, [team?.authcode, teamAuthcode]);
+  }, [teamAuthcode]);
 
   const handleResetAuthcode = useCallback(async () => {
     setResetting(true);
     try {
-      const updatedTeam = await resetMyTeamAuthcode();
-      setTeam(updatedTeam);
-      
-      // 刷新用户信息以获取新的 team_authcode
+      await resetMyTeamAuthcode();
       const userInfo = await getCurrentUser();
       userStore.setUser(userInfo);
-      
       setResetDialogOpen(false);
       logger.info("认证码重置成功");
     } catch (err) {
@@ -120,14 +61,13 @@ function DashboardPageImpl() {
     }
   }, []);
 
-
-  // 获取认证码（优先使用用户信息中的，其次使用团队信息中的）
-  const authcode = mounted ? (teamAuthcode || team?.authcode) : null;
-  const teamName = mounted ? (team?.name || (teamCode ? `团队: ${teamCode}` : "")) : "";
+  const authcode = mounted ? teamAuthcode : null;
+  const teamName = mounted && teamCode ? `团队: ${teamCode}` : "";
+  const canResetAuthcode = useHasMenuButtonPermission(MENU_BUTTON_PERMISSIONS.team?.resetAuthcode);
 
   return (
     <div className="space-y-6">
-      {/* API 认证码卡片 - 所有用户都可以看到（如果有认证码） */}
+      {/* API 认证码卡片，重置按钮由 menu:team:reset_authcode 按钮权限控制 */}
       {mounted && (teamCode || authcode) && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 px-6">
@@ -142,9 +82,7 @@ function DashboardPageImpl() {
             )}
           </CardHeader>
           <CardContent>
-            {loading ? (
-              <div className="text-sm text-muted-foreground">加载中...</div>
-            ) : authcode ? (
+            {authcode ? (
               <div className="space-y-4">
                 <CardDescription className="mt-0">
                   用于调用 <code className="text-xs bg-muted px-1 py-0.5 rounded">/api</code> 接口的认证码，请在请求头中添加 <code className="text-xs bg-muted px-1 py-0.5 rounded">X-Team-AuthCode</code>
@@ -167,7 +105,7 @@ function DashboardPageImpl() {
                       )}
                     </Button>
                   </div>
-                  {teamCode && (
+                  {teamCode && canResetAuthcode && (
                     <Button
                       size="sm"
                       onClick={() => setResetDialogOpen(true)}
@@ -188,7 +126,6 @@ function DashboardPageImpl() {
         </Card>
       )}
 
-      {/* 重置认证码确认对话框 */}
       <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

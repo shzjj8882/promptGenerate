@@ -39,8 +39,9 @@ class PermissionService:
         resource: Optional[str] = None,
         is_active: Optional[bool] = None,
         permission_type: Optional[str] = None,
+        exclude_team_admin_only: bool = False,
     ) -> List[Permission]:
-        """获取权限列表。permission_type: 'menu'|'api' 区分菜单权限与接口权限"""
+        """获取权限列表。permission_type: 'menu'|'api' 区分菜单权限与接口权限。exclude_team_admin_only 为 True 时排除团队管理（仅系统管理员可见）"""
         query = select(Permission)
         if resource:
             query = query.where(Permission.resource == resource)
@@ -48,6 +49,18 @@ class PermissionService:
             query = query.where(Permission.is_active == is_active)
         if permission_type:
             query = query.where(Permission.type == permission_type)
+        if exclude_team_admin_only:
+            # 排除仅系统管理员可见的权限（使用 is_system_admin_only 字段，若无则兼容 code 规则）
+            if hasattr(Permission, "is_system_admin_only"):
+                query = query.where(Permission.is_system_admin_only.is_(False))
+            else:
+                query = query.where(
+                    and_(
+                        ~Permission.code.like("menu:team%"),
+                        ~Permission.code.like("menu:teams%"),
+                        Permission.resource != "teams",
+                    )
+                )
         query = query.offset(skip).limit(limit).order_by(Permission.resource, Permission.action)
         result = await db.execute(query)
         return list(result.scalars().all())
@@ -58,8 +71,9 @@ class PermissionService:
         resource: Optional[str] = None,
         is_active: Optional[bool] = None,
         permission_type: Optional[str] = None,
+        exclude_team_admin_only: bool = False,
     ) -> int:
-        """统计权限数量。permission_type: 'menu'|'api'"""
+        """统计权限数量。permission_type: 'menu'|'api'。exclude_team_admin_only 为 True 时排除团队管理"""
         query = select(func.count(Permission.id))
         if resource:
             query = query.where(Permission.resource == resource)
@@ -67,6 +81,17 @@ class PermissionService:
             query = query.where(Permission.is_active == is_active)
         if permission_type:
             query = query.where(Permission.type == permission_type)
+        if exclude_team_admin_only:
+            if hasattr(Permission, "is_system_admin_only"):
+                query = query.where(Permission.is_system_admin_only.is_(False))
+            else:
+                query = query.where(
+                    and_(
+                        ~Permission.code.like("menu:team%"),
+                        ~Permission.code.like("menu:teams%"),
+                        Permission.resource != "teams",
+                    )
+                )
         result = await db.execute(query)
         return result.scalar() or 0
 
@@ -74,11 +99,15 @@ class PermissionService:
     MENU_ROUTE_ACTIONS = ("menu_list", "menu")
 
     # 功能组展示顺序与展示名，由后端决定，前端仅按此渲染（角色管理-权限分配）
-    RESOURCE_ORDER = ("tenant", "prompts", "scenes", "rbac")
+    RESOURCE_ORDER = ("tenant", "prompts", "scenes", "config", "tables", "multi_dimension_tables", "team", "rbac")
     RESOURCE_LABELS = {
         "tenant": "租户管理",
         "prompts": "提示词管理",
         "scenes": "场景管理",
+        "config": "配置中心",
+        "tables": "多维表格",
+        "multi_dimension_tables": "多维表格",
+        "team": "团队",
         "rbac": "权限管理",
     }
 
@@ -86,14 +115,30 @@ class PermissionService:
     async def get_permissions_grouped(
         db: AsyncSession,
         is_active: Optional[bool] = True,
+        exclude_team_admin_only: bool = False,
     ) -> dict:
         """
         返回平铺的权限列表，由前端按 type / resource 等用 groupBy 组合。
         返回: { "items": [Permission, ...], "resource_order": [...], "resource_labels": {...} }
+
+        Args:
+            exclude_team_admin_only: 若为 True，排除仅系统管理员可见的权限（menu:team%、menu:teams%），
+                                    用于团队管理员在「权限分配」中不看到团队管理相关选项
         """
         q = select(Permission)
         if is_active is not None:
             q = q.where(Permission.is_active.is_(is_active))
+        if exclude_team_admin_only:
+            if hasattr(Permission, "is_system_admin_only"):
+                q = q.where(Permission.is_system_admin_only.is_(False))
+            else:
+                q = q.where(
+                    and_(
+                        ~Permission.code.like("menu:team%"),
+                        ~Permission.code.like("menu:teams%"),
+                        Permission.resource != "teams",
+                    )
+                )
         result = await db.execute(q.order_by(Permission.resource, Permission.action))
         perms = list(result.scalars().all())
         return {
@@ -153,39 +198,49 @@ class PermissionService:
             
             # 系统超级管理员只能看到团队管理菜单，团队管理员不能看到团队管理菜单
             if user.is_superuser:
-                # 系统管理员只能看到团队管理相关的菜单（code 以 menu:team 或 menu:teams 开头）
-                q = q.where(
-                    or_(
-                        Permission.code.like("menu:team%"),
-                        Permission.code.like("menu:teams%")
+                # 系统管理员只能看到团队管理相关的菜单（is_system_admin_only=True 或兼容 code 规则）
+                if hasattr(Permission, "is_system_admin_only"):
+                    q = q.where(Permission.is_system_admin_only.is_(True))
+                else:
+                    q = q.where(
+                        or_(
+                            Permission.code.like("menu:team%"),
+                            Permission.code.like("menu:teams%")
+                        )
                     )
-                )
                 result = await db.execute(q)
                 all_perms = list(result.scalars().all())
             elif user.is_team_admin:
                 # 团队管理员拥有所有菜单权限，但排除团队管理菜单（仅系统管理员可见）
-                q = q.where(
-                    and_(
-                        ~Permission.code.like("menu:team%"),
-                        ~Permission.code.like("menu:teams%")
+                if hasattr(Permission, "is_system_admin_only"):
+                    q = q.where(Permission.is_system_admin_only.is_(False))
+                else:
+                    q = q.where(
+                        and_(
+                            ~Permission.code.like("menu:team%"),
+                            ~Permission.code.like("menu:teams%")
+                        )
                     )
-                )
                 result = await db.execute(q)
                 all_perms = list(result.scalars().all())
             else:
-                # 获取用户有权限的菜单，但排除团队管理菜单（仅系统管理员可见）
-                q = q.join(role_permissions, Permission.id == role_permissions.c.permission_id)\
+                # 获取用户有权限的菜单（按角色权限过滤），但排除团队管理菜单（仅系统管理员可见）
+                role_q = q.join(role_permissions, Permission.id == role_permissions.c.permission_id)\
                      .join(user_roles, role_permissions.c.role_id == user_roles.c.role_id)\
                      .join(Role, user_roles.c.role_id == Role.id)\
                      .where(user_roles.c.user_id == user_id)\
                      .where(Role.is_active.is_(True))\
-                     .where(
-                         and_(
-                             ~Permission.code.like("menu:team%"),
-                             ~Permission.code.like("menu:teams%")
-                         )
-                     )
-                result = await db.execute(q)
+                     .distinct()
+                if hasattr(Permission, "is_system_admin_only"):
+                    role_q = role_q.where(Permission.is_system_admin_only.is_(False))
+                else:
+                    role_q = role_q.where(
+                        and_(
+                            ~Permission.code.like("menu:team%"),
+                            ~Permission.code.like("menu:teams%")
+                        )
+                    )
+                result = await db.execute(role_q)
                 all_perms = list(result.scalars().all())
         else:
             result = await db.execute(q)
@@ -292,12 +347,16 @@ class PermissionService:
         if existing:
             raise ValueError("权限代码已存在")
         
+        perm_type = getattr(permission_data, "type", Permission.TYPE_API) or Permission.TYPE_API
         permission = Permission(
             name=permission_data.name,
             code=permission_data.code,
             resource=permission_data.resource,
             action=permission_data.action,
-            type=getattr(permission_data, "type", Permission.TYPE_API) or Permission.TYPE_API,
+            type=perm_type,
+            type_name=getattr(permission_data, "type_name", None),
+            group_name=getattr(permission_data, "group_name", None),
+            is_system_admin_only=getattr(permission_data, "is_system_admin_only", False),
             description=permission_data.description,
             parent_id=getattr(permission_data, "parent_id", None),
             sort_order=getattr(permission_data, "sort_order", 0) or 0,
@@ -331,6 +390,12 @@ class PermissionService:
             permission.is_active = permission_data.is_active
         if getattr(permission_data, "type", None) is not None:
             permission.type = permission_data.type
+        if getattr(permission_data, "type_name", None) is not None:
+            permission.type_name = permission_data.type_name
+        if getattr(permission_data, "group_name", None) is not None:
+            permission.group_name = permission_data.group_name
+        if getattr(permission_data, "is_system_admin_only", None) is not None:
+            permission.is_system_admin_only = permission_data.is_system_admin_only
         if getattr(permission_data, "parent_id", None) is not None:
             permission.parent_id = permission_data.parent_id
         if getattr(permission_data, "sort_order", None) is not None:
@@ -651,6 +716,12 @@ class RoleService:
                     cache_keys_to_delete.append(f"{cache_prefix}{user_id}:team:{user.team_code}:global:False")
                     cache_keys_to_delete.append(f"{cache_prefix}{user_id}:team:{user.team_code}:global:True")
                 
+                # 失效菜单树缓存（角色变更后需重新按角色权限获取菜单）
+                menu_tree_prefix = CACHE_KEY_PREFIXES['menu_tree']
+                cache_keys_to_delete.append(
+                    f"{menu_tree_prefix}user:{user_id}:team:{user.team_code or 'none'}:super:{user.is_superuser}:admin:{user.is_team_admin}"
+                )
+                
                 # 批量删除（避免 keys() 性能问题）
                 try:
                     await delete_cache_keys(cache_keys_to_delete)
@@ -836,41 +907,82 @@ class RoleService:
         if not user:
             return {"menu": [], "api": []}
         # 系统超级管理员只能拥有团队管理相关的权限，团队管理员不能拥有团队管理菜单权限
+        # 菜单权限 = type in (menu, button)，接口权限 = type = api
+        _menu_types = (Permission.TYPE_MENU, getattr(Permission, "TYPE_BUTTON", "button"))
         if user.is_superuser:
-            # 系统管理员只能拥有团队管理相关的菜单权限（code 以 menu:team 或 menu:teams 开头）
-            # 接口权限：系统管理员可以拥有所有接口权限（用于管理功能）
-            result = await db.execute(
-                select(Permission.code, Permission.type).where(
-                    Permission.is_active.is_(True),
-                    or_(
-                        Permission.code.like("menu:team%"),  # 团队管理菜单权限（单数）
-                        Permission.code.like("menu:teams%"),  # 团队管理菜单权限（复数）
-                        Permission.type == Permission.TYPE_API  # 所有接口权限
+            # 系统管理员：菜单权限仅 is_system_admin_only=True，接口权限全部
+            if hasattr(Permission, "is_system_admin_only"):
+                result = await db.execute(
+                    select(Permission.code, Permission.type).where(
+                        Permission.is_active.is_(True),
+                        or_(
+                            Permission.is_system_admin_only.is_(True),
+                            Permission.type == Permission.TYPE_API
+                        )
                     )
                 )
-            )
+            else:
+                result = await db.execute(
+                    select(Permission.code, Permission.type).where(
+                        Permission.is_active.is_(True),
+                        or_(
+                            Permission.code.like("menu:team%"),
+                            Permission.code.like("menu:teams%"),
+                            Permission.type == Permission.TYPE_API
+                        )
+                    )
+                )
             rows = result.fetchall()
-            menu = [r[0] for r in rows if r[1] == Permission.TYPE_MENU]
+            menu = [r[0] for r in rows if r[1] in _menu_types]
             api = [r[0] for r in rows if r[1] == Permission.TYPE_API]
+            if not menu:
+                menu = ["menu:teams:list"]
             out = {"menu": menu, "api": api}
         elif user.is_team_admin:
-            # 团队管理员拥有所有权限，但排除团队管理菜单权限（仅系统管理员可见）
-            result = await db.execute(
-                select(Permission.code, Permission.type).where(
-                    Permission.is_active.is_(True),
-                    and_(
-                        ~Permission.code.like("menu:team%"),
-                        ~Permission.code.like("menu:teams%")
+            # 团队管理员：排除 is_system_admin_only 的权限
+            if hasattr(Permission, "is_system_admin_only"):
+                result = await db.execute(
+                    select(Permission.code, Permission.type).where(
+                        Permission.is_active.is_(True),
+                        Permission.is_system_admin_only.is_(False)
                     )
                 )
-            )
+            else:
+                result = await db.execute(
+                    select(Permission.code, Permission.type).where(
+                        Permission.is_active.is_(True),
+                        and_(
+                            ~Permission.code.like("menu:team%"),
+                            ~Permission.code.like("menu:teams%")
+                        )
+                    )
+                )
             rows = result.fetchall()
-            menu = [r[0] for r in rows if r[1] == Permission.TYPE_MENU]
+            menu = [r[0] for r in rows if r[1] in _menu_types]
             api = [r[0] for r in rows if r[1] == Permission.TYPE_API]
+
+            # 兜底逻辑：新库还没跑迁移脚本，permissions 为空时，团队管理员至少要有一套基础菜单
+            if not menu:
+                menu = [
+                    # 核心业务菜单
+                    "menu:tenant:list",          # 租户管理
+                    "menu:prompts:list",         # 提示词管理
+                    # 配置中心相关
+                    "menu:config",
+                    "menu:config:scenes",
+                    "menu:config:placeholders",
+                    "menu:tables:list",          # 多维表格
+                    # 权限管理相关（团队管理员可以给自己团队分配角色）
+                    "menu:rbac",
+                    "menu:rbac:roles:list",
+                    "menu:rbac:user_roles:list",
+                    "menu:rbac:menus:list",
+                ]
+
             out = {"menu": menu, "api": api}
         else:
             # 普通用户权限（通过角色），但排除团队管理菜单（仅系统管理员可见）
-            q = (
+            base_q = (
                 select(Permission.code, Permission.type)
                 .select_from(Permission)
                 .join(role_permissions, Permission.id == role_permissions.c.permission_id)
@@ -879,16 +991,19 @@ class RoleService:
                 .where(user_roles.c.user_id == user_id)
                 .where(Role.is_active.is_(True))
                 .where(Permission.is_active.is_(True))
-                .where(
+            )
+            if hasattr(Permission, "is_system_admin_only"):
+                base_q = base_q.where(Permission.is_system_admin_only.is_(False))
+            else:
+                base_q = base_q.where(
                     and_(
                         ~Permission.code.like("menu:team%"),
                         ~Permission.code.like("menu:teams%")
                     )
                 )
-            )
-            result = await db.execute(q)
+            result = await db.execute(base_q)
             rows = result.fetchall()
-            menu = [r[0] for r in rows if r[1] == Permission.TYPE_MENU]
+            menu = [r[0] for r in rows if r[1] in _menu_types]
             api = [r[0] for r in rows if r[1] == Permission.TYPE_API]
             out = {"menu": menu, "api": api}
         if redis_client is not None:
@@ -976,43 +1091,49 @@ class RoleService:
                     result[user_id] = {"menu": [], "api": []}
                     continue
                 
+                _menu_types = (Permission.TYPE_MENU, getattr(Permission, "TYPE_BUTTON", "button"))
                 if user.is_superuser:
-                    # 系统管理员权限：只能看到团队管理菜单和所有接口权限
-                    perm_result = await db.execute(
-                        select(Permission.code, Permission.type).where(
-                            Permission.is_active.is_(True),
-                            or_(
-                                Permission.code.like("menu:team%"),
-                                Permission.code.like("menu:teams%"),
-                                Permission.type == Permission.TYPE_API
+                    if hasattr(Permission, "is_system_admin_only"):
+                        perm_result = await db.execute(
+                            select(Permission.code, Permission.type).where(
+                                Permission.is_active.is_(True),
+                                or_(
+                                    Permission.is_system_admin_only.is_(True),
+                                    Permission.type == Permission.TYPE_API
+                                )
                             )
                         )
-                    )
+                    else:
+                        perm_result = await db.execute(
+                            select(Permission.code, Permission.type).where(
+                                Permission.is_active.is_(True),
+                                or_(
+                                    Permission.code.like("menu:team%"),
+                                    Permission.code.like("menu:teams%"),
+                                    Permission.type == Permission.TYPE_API
+                                )
+                            )
+                        )
                 elif user.is_team_admin:
-                    # 团队管理员权限：拥有除团队管理菜单外的所有权限
-                    perm_result = await db.execute(
-                        select(Permission.code, Permission.type).where(
-                            Permission.is_active.is_(True),
-                            and_(
-                                ~Permission.code.like("menu:team%"),
-                                ~Permission.code.like("menu:teams%")
+                    if hasattr(Permission, "is_system_admin_only"):
+                        perm_result = await db.execute(
+                            select(Permission.code, Permission.type).where(
+                                Permission.is_active.is_(True),
+                                Permission.is_system_admin_only.is_(False)
                             )
                         )
-                    )
-                elif user.is_team_admin:
-                    # 团队管理员权限：拥有除团队管理菜单外的所有权限
-                    perm_result = await db.execute(
-                        select(Permission.code, Permission.type).where(
-                            Permission.is_active.is_(True),
-                            and_(
-                                ~Permission.code.like("menu:team%"),
-                                ~Permission.code.like("menu:teams%")
+                    else:
+                        perm_result = await db.execute(
+                            select(Permission.code, Permission.type).where(
+                                Permission.is_active.is_(True),
+                                and_(
+                                    ~Permission.code.like("menu:team%"),
+                                    ~Permission.code.like("menu:teams%")
+                                )
                             )
                         )
-                    )
                 else:
-                    # 普通用户权限（通过角色），但排除团队管理菜单（仅系统管理员可见）
-                    perm_result = await db.execute(
+                    base_q = (
                         select(Permission.code, Permission.type)
                         .select_from(Permission)
                         .join(role_permissions, Permission.id == role_permissions.c.permission_id)
@@ -1021,16 +1142,20 @@ class RoleService:
                         .where(user_roles.c.user_id == user_id)
                         .where(Role.is_active.is_(True))
                         .where(Permission.is_active.is_(True))
-                        .where(
+                    )
+                    if hasattr(Permission, "is_system_admin_only"):
+                        base_q = base_q.where(Permission.is_system_admin_only.is_(False))
+                    else:
+                        base_q = base_q.where(
                             and_(
                                 ~Permission.code.like("menu:team%"),
                                 ~Permission.code.like("menu:teams%")
                             )
                         )
-                    )
+                    perm_result = await db.execute(base_q)
                 
                 rows = perm_result.fetchall()
-                menu = [r[0] for r in rows if r[1] == Permission.TYPE_MENU]
+                menu = [r[0] for r in rows if r[1] in _menu_types]
                 api = [r[0] for r in rows if r[1] == Permission.TYPE_API]
                 result[user_id] = {"menu": menu, "api": api}
             
@@ -1081,7 +1206,7 @@ class RoleService:
         redis_client: Optional[Any],
         role_id: str,
     ) -> None:
-        """角色权限变更或删除时，失效所有拥有该角色的用户的权限缓存"""
+        """角色权限变更或删除时，失效所有拥有该角色的用户的权限缓存和菜单树缓存"""
         if redis_client is None:
             return
         try:
@@ -1089,9 +1214,17 @@ class RoleService:
             user_ids = await RoleService.get_user_ids_for_role(db, role_id)
             if not user_ids:
                 return
-            # 使用统一的缓存 key 前缀和批量删除方法
+            # 失效 user_perm 缓存
             cache_prefix = CACHE_KEY_PREFIXES.get('user_perm', RoleService.USER_PERM_CACHE_KEY_PREFIX)
             keys = [f"{cache_prefix}{uid}" for uid in user_ids]
+            # 失效菜单树缓存：需查询每个用户的 team_code、is_superuser、is_team_admin 以构建 key
+            users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+            users = users_result.scalars().all()
+            menu_tree_prefix = CACHE_KEY_PREFIXES['menu_tree']
+            for u in users:
+                keys.append(
+                    f"{menu_tree_prefix}user:{u.id}:team:{u.team_code or 'none'}:super:{u.is_superuser}:admin:{u.is_team_admin}"
+                )
             await delete_cache_keys(keys)
         except (redis.ConnectionError, redis.TimeoutError) as e:
             # 连接错误，忽略

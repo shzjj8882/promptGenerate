@@ -33,6 +33,9 @@ def permission_to_response(permission: Permission) -> PermissionResponse:
         "resource": permission.resource,
         "action": permission.action,
         "type": permission.type,
+        "type_name": getattr(permission, "type_name", None),
+        "group_name": getattr(permission, "group_name", None),
+        "is_system_admin_only": getattr(permission, "is_system_admin_only", False),
         "description": permission.description,
         "parent_id": permission.parent_id,
         "sort_order": permission.sort_order,
@@ -78,13 +81,17 @@ async def get_permissions_grouped(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_team_admin_or_superuser),
 ):
-    """返回平铺的权限列表及展示顺序/文案，前端用 groupBy 按类型组合（需要团队管理员或超级管理员权限）"""
-    grouped = await PermissionService.get_permissions_grouped(db, is_active=is_active)
+    """返回平铺的权限列表及展示顺序/文案，前端用 groupBy 按类型组合（需要团队管理员或超级管理员权限）。团队管理员不看到团队管理相关权限（仅系统管理员可分配）"""
+    exclude_team_admin_only = current_user.is_team_admin and not current_user.is_superuser
+    grouped = await PermissionService.get_permissions_grouped(db, is_active=is_active, exclude_team_admin_only=exclude_team_admin_only)
     items = grouped.get("items") or []
     out = {
         "items": [permission_to_response(p).model_dump() for p in items],
         "resource_order": grouped.get("resource_order") or [],
         "resource_labels": grouped.get("resource_labels") or {},
+        # 前端 groupBy 提示：菜单权限 tab = type in type_menu_values，接口权限 tab = type in type_api_values
+        "type_menu_values": ["menu", "button"],
+        "type_api_values": ["api"],
     }
     return ResponseModel.success_response(
         data=out,
@@ -198,12 +205,15 @@ async def get_permissions(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_team_admin_or_superuser),
 ):
-    """获取权限列表（需要团队管理员或超级管理员权限）"""
+    """获取权限列表（需要团队管理员或超级管理员权限）。团队管理员不看到团队管理相关权限"""
+    exclude_team_admin_only = current_user.is_team_admin and not current_user.is_superuser
     permissions = await PermissionService.get_permissions(
-        db, skip=skip, limit=limit, resource=resource, is_active=is_active, permission_type=type
+        db, skip=skip, limit=limit, resource=resource, is_active=is_active, permission_type=type,
+        exclude_team_admin_only=exclude_team_admin_only
     )
     total = await PermissionService.count_permissions(
-        db, resource=resource, is_active=is_active, permission_type=type
+        db, resource=resource, is_active=is_active, permission_type=type,
+        exclude_team_admin_only=exclude_team_admin_only
     )
     # 使用辅助函数安全转换，避免访问未加载的 children 关联关系
     permission_list = [permission_to_response(p) for p in permissions]

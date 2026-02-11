@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { register as registerApi } from "@/lib/api/auth";
 
@@ -144,9 +145,8 @@ export function RegisterForm() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">密码</Label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               placeholder="请输入密码"
               {...register("password")}
               className={errors.password ? "border-destructive" : ""}
@@ -159,9 +159,8 @@ export function RegisterForm() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">确认密码</Label>
-            <Input
+            <PasswordInput
               id="confirmPassword"
-              type="password"
               placeholder="请再次输入密码"
               {...register("confirmPassword")}
               className={errors.confirmPassword ? "border-destructive" : ""}

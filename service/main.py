@@ -3,12 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi import HTTPException as FastAPIHTTPException
-from sqlalchemy import text
+from sqlalchemy import text, select, func
+from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
-from app.core.database import init_db, engine
+from app.core.database import init_db, engine, AsyncSessionLocal
 from app.core.response import ResponseModel
 from app.core.middleware import RequestIDAndAuditMiddleware
 from app.routers import admin, api
+from app.models.user import User
+from app.core.security import get_password_hash
 import logging
 
 logger = logging.getLogger(__name__)
@@ -160,6 +163,105 @@ async def startup_event():
     # 注册占位符数据获取方法
     from app.services import placeholder_methods_registry
     placeholder_methods_registry.register_placeholder_methods()
+
+    # 在服务启动时自动执行与 RBAC / 菜单 相关的迁移脚本（幂等，可重复执行）
+    # 这样就不需要手动到 scripts/ 目录逐个运行，确保团队管理员创建后能立即获得完整菜单
+    try:
+        from scripts import (
+            migrate_rbac,
+            migrate_permission_menu_type,
+            migrate_permission_config_fields,
+            migrate_add_config_menu,
+            migrate_add_models_menu,
+            migrate_add_tables_menu,
+            migrate_add_tables_menu_button_permissions,
+            migrate_add_team_menu,
+            migrate_add_rbac_submenus,
+            migrate_api_permissions,
+            migrate_add_tables_api_permissions,
+            migrate_add_reset_authcode_permission,
+            migrate_remove_team_auth_menu,
+        )
+
+        # 这些脚本内部都使用 asyncpg 并带有「IF NOT EXISTS / 已存在则跳过」等幂等逻辑
+        await migrate_rbac.migrate()
+        await migrate_permission_menu_type.migrate()
+        await migrate_permission_config_fields.migrate()
+        await migrate_add_config_menu.migrate()
+        await migrate_add_models_menu.migrate()
+        await migrate_add_tables_menu.migrate()
+        await migrate_add_tables_menu_button_permissions.migrate()
+        await migrate_add_team_menu.migrate()
+        await migrate_add_rbac_submenus.migrate()
+        await migrate_api_permissions.migrate()
+        await migrate_add_tables_api_permissions.migrate()
+        await migrate_add_reset_authcode_permission.migrate()
+        await migrate_remove_team_auth_menu.migrate()
+        logger.info("RBAC / 菜单相关迁移脚本已在启动时自动执行完成")
+        # 迁移完成后清除菜单树和用户权限缓存，避免用户仍拿到迁移前的旧缓存（空菜单、缺接口权限）
+        try:
+            from app.core.cache import CACHE_KEY_PREFIXES, delete_cache_pattern
+            from app.core.database import get_redis_optional
+            redis_client = await get_redis_optional()
+            if redis_client:
+                await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['menu_tree']}*")
+                await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['user_perm']}*")
+                logger.info("菜单树与用户权限缓存已清除")
+        except Exception as cache_err:
+            logger.warning(f"清除菜单树缓存失败（可忽略）: {cache_err}")
+    except Exception as e:
+        # 启动时不因为迁移失败直接让服务挂掉，方便在日志中排查
+        logger.exception(f"启动时执行 RBAC / 菜单迁移脚本失败: {e}")
+
+    # 初始化默认系统管理员账号（如不存在）
+    await initialize_default_admin()
+
+
+async def initialize_default_admin():
+    """
+    初始化默认系统管理员账号:
+    - 用户名: admin
+    - 密码:   admin
+    - 仅在当前没有任何超级管理员用户时创建
+    """
+    async with AsyncSessionLocal() as session:
+        # 统计超级管理员数量（team_code 为空，is_superuser 为 True）
+        result = await session.execute(
+            select(func.count(User.id)).where(User.is_superuser.is_(True))
+        )
+        superuser_count = result.scalar() or 0
+
+        if superuser_count > 0:
+            logger.info("检测到已有系统超级管理员用户，跳过默认 admin 账号初始化")
+            return
+
+        admin_username = "admin"
+        admin_password = "admin"
+        admin_email = "admin@example.com"
+
+        admin_user = User(
+            username=admin_username,
+            email=admin_email,
+            full_name="System Administrator",
+            hashed_password=get_password_hash(admin_password),
+            is_active=True,
+            is_superuser=True,
+            is_team_admin=False,
+            team_code=None,
+            team_id=None,
+        )
+
+        session.add(admin_user)
+        try:
+            await session.commit()
+            logger.info("已创建默认系统管理员账号：用户名 'admin'，密码 'admin'")
+        except IntegrityError:
+            # 并发或重复启动导致的唯一约束冲突时忽略
+            await session.rollback()
+            logger.warning("创建默认 admin 管理员账号时发生唯一约束冲突，可能已被其他进程创建")
+        except Exception:
+            await session.rollback()
+            logger.exception("创建默认 admin 管理员账号失败")
 
 
 @app.on_event("shutdown")

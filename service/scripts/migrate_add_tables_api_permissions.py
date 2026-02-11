@@ -33,8 +33,8 @@ async def migrate():
         for code, name, resource, action, description in API_PERMISSIONS:
             pid = str(uuid.uuid4())
             result = await conn.execute("""
-                INSERT INTO permissions (id, name, code, resource, action, type, description, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'api', $6, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'api', $6, NULL, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
             """, pid, name, code, resource, action, description or "")
             if result == "INSERT 0 1":

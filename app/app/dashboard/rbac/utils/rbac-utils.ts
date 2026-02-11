@@ -21,7 +21,8 @@ export const MENU_ROUTE_ACTIONS = ["menu_list", "menu"];
 /** 前端用 groupBy 将后端平铺的权限按类型组合 */
 export function groupPermissionsByType(raw: PermissionsGroupedRawResponse): PermissionsGroupedResponse {
   const byType = groupBy(raw.items, (p: Permission) => p.type ?? "api");
-  const menu = byType["menu"] ?? [];
+  // 菜单权限 tab 包含 type=menu（路由）和 type=button（按钮），与后端 type_menu_values 一致
+  const menu = [...(byType["menu"] ?? []), ...(byType["button"] ?? [])];
   const api = byType["api"] ?? [];
   const menuRoute = groupBy(
     menu.filter((p: Permission) => MENU_ROUTE_ACTIONS.includes((p.action ?? "").trim())),

@@ -32,8 +32,8 @@ async def migrate():
         for code, name, resource, action, description in MENU_BUTTON_PERMISSIONS:
             pid = str(uuid.uuid4())
             result = await conn.execute("""
-                INSERT INTO permissions (id, name, code, resource, action, type, description, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'menu', $6, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, sort_order, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'menu', $6, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
             """, pid, name, code, resource, action, description or "")
             if result == "INSERT 0 1":

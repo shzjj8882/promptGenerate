@@ -12,10 +12,13 @@ if TYPE_CHECKING:
 class PermissionBase(BaseModel):
     """权限基础模型"""
     name: str = Field(..., min_length=1, max_length=100, description="权限名称")
-    code: str = Field(..., min_length=1, max_length=100, description="权限代码（唯一标识，如：tenant:create）")
-    resource: str = Field(..., min_length=1, max_length=50, description="资源（如：tenant, prompt, rag）")
-    action: str = Field(..., min_length=1, max_length=50, description="操作（如：create, read, update, delete）")
-    type: Literal["menu", "api"] = Field("api", description="权限类型：menu=菜单权限，api=接口权限")
+    code: str = Field(..., min_length=1, max_length=100, description="权限代码（唯一标识）")
+    resource: str = Field(..., min_length=1, max_length=50, description="资源（如：tenant, prompts, rbac）")
+    action: str = Field(..., min_length=1, max_length=50, description="操作（如：create, list, menu_list）")
+    type: Literal["menu", "api", "button"] = Field("api", description="权限类型：menu=菜单, api=接口, button=按钮")
+    type_name: Optional[str] = Field(None, max_length=50, description="类型名称，用于展示")
+    group_name: Optional[str] = Field(None, max_length=50, description="分组名称，用于前端 groupBy")
+    is_system_admin_only: bool = Field(False, description="是否仅系统管理员可见")
     description: Optional[str] = Field(None, max_length=500, description="权限描述")
     parent_id: Optional[str] = Field(None, description="父权限ID（用于菜单层级）")
     sort_order: int = Field(0, description="排序顺序（用于菜单排序）")
@@ -31,7 +34,10 @@ class PermissionCreate(PermissionBase):
 class PermissionUpdate(BaseModel):
     """更新权限请求模型"""
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="权限名称")
-    type: Optional[Literal["menu", "api"]] = Field(None, description="权限类型")
+    type: Optional[Literal["menu", "api", "button"]] = Field(None, description="权限类型")
+    type_name: Optional[str] = Field(None, max_length=50, description="类型名称")
+    group_name: Optional[str] = Field(None, max_length=50, description="分组名称")
+    is_system_admin_only: Optional[bool] = Field(None, description="是否仅系统管理员可见")
     description: Optional[str] = Field(None, max_length=500, description="权限描述")
     parent_id: Optional[str] = Field(None, description="父权限ID（用于菜单层级）")
     sort_order: Optional[int] = Field(None, description="排序顺序（用于菜单排序）")
@@ -42,6 +48,9 @@ class PermissionResponse(PermissionBase):
     """权限响应模型"""
     id: str
     type: str = "api"
+    type_name: Optional[str] = None
+    group_name: Optional[str] = None
+    is_system_admin_only: bool = False
     parent_id: Optional[str] = None
     sort_order: int = 0
     is_active: bool
