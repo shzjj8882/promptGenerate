@@ -13,8 +13,6 @@ from app.schemas.user import UserResponse
 class SceneService:
     """场景服务"""
 
-    PREDEFINED_SCENE_CODES = {"research", "ppt_report", "sales_order"}
-
     @staticmethod
     async def list_scenes(db: AsyncSession, current_user: UserResponse) -> List[dict]:
         """
@@ -340,9 +338,6 @@ class SceneService:
     @staticmethod
     async def delete_scene(db: AsyncSession, scene_code: str, current_user: UserResponse) -> dict:
         """删除场景及其提示词、占位符，事务在 Service 内提交。"""
-        if scene_code in SceneService.PREDEFINED_SCENE_CODES:
-            raise ValueError("预置场景不允许删除")
-
         # 根据用户角色确定 team_id
         team_id = None
         if current_user.is_team_admin and current_user.team_id:

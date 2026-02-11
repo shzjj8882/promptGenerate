@@ -74,6 +74,38 @@ async def verify_optional_api_key(
     return
 
 
+async def get_team_code_from_auth(
+    request: Request,
+    x_team_authcode: Optional[str] = Header(None, alias="X-Team-AuthCode"),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[str]:
+    """
+    从认证信息获取 team_code。
+    用于提示词等接口：当请求体未传 teamCode 时，可从请求头推导团队。
+    优先级：X-Team-AuthCode > Bearer Token（用户所属团队）
+    """
+    if x_team_authcode:
+        team = await TeamService.get_team_by_authcode(db, x_team_authcode.strip())
+        if team:
+            return team.code
+    authorization = request.headers.get("Authorization")
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "").strip()
+        if token:
+            from app.core.security import verify_token
+            from app.services.user_service import UserService
+            payload = verify_token(token)
+            if payload is not None:
+                username: str = payload.get("sub")
+                if username:
+                    user = await UserService.get_user_by_username(db, username)
+                    if user and user.team_id:
+                        team = await TeamService.get_team_by_id(db, user.team_id)
+                        if team:
+                            return team.code
+    return None
+
+
 async def get_team_id_from_auth(
     request: Request,
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),

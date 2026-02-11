@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 清理重复和旧格式的占位符
-保留标准格式的占位符（不关联场景或关联 sales_order）
+保留标准格式的占位符（优先全局占位符 scene=""，其次按创建时间取最新）
 """
 import asyncio
 import sys
@@ -35,8 +35,8 @@ OLD_FORMAT_KEYS = [
     "sysConversationId",
 ]
 
-# 主要场景（保留该场景的占位符）
-PRIMARY_SCENE = "sales_order"
+# 优先保留的占位符 scene（全局占位符优先）
+PRIMARY_SCENE = ""
 
 
 async def cleanup_placeholders():
@@ -90,17 +90,17 @@ async def cleanup_placeholders():
             
             print(f"\n  📌 {key}: 发现 {len(items)} 条记录")
             
-            # 优先保留 sales_order 场景的，如果没有则保留最新的
+            # 优先保留全局占位符（scene=""），如果没有则保留最新的
             keep_item = None
             delete_items = []
             
-            # 先找 sales_order 场景的
+            # 先找全局占位符
             for item in items:
-                if item['scene'] == PRIMARY_SCENE:
+                if (item['scene'] or '') == PRIMARY_SCENE:
                     keep_item = item
                     break
             
-            # 如果没有 sales_order，保留最新的
+            # 如果没有全局占位符，保留最新的
             if not keep_item:
                 keep_item = items[0]
             

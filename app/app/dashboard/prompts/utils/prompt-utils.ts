@@ -140,13 +140,7 @@ export function isAutoFetchedPlaceholder(
  * 获取场景标签
  */
 export function getSceneLabel(scene: PromptScene, includeBadge = false): string {
-  const sceneLabels: Record<string, string> = {
-    research: "研究报告",
-    ppt_report: "PPT报告",
-    sales_order: "销售订单",
-  };
-
-  const label = sceneLabels[scene] || scene;
+  const label = scene;
   
   if (includeBadge) {
     return `[${label}]`;

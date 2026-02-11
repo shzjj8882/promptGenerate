@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-创建 scenes 表并插入预置场景（调研、PPT报告、销售打单）。
-执行前需已存在 users、tenants 等表；执行后场景数据持久化到 DB，多实例共享。
+创建 scenes 表。
+执行前需已存在 users、tenants 等表；场景由管理后台创建。
 """
 import asyncio
 import asyncpg
@@ -30,18 +30,6 @@ async def migrate():
         """)
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_scenes_code ON scenes(code);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_scenes_team_code ON scenes(team_code);")
-
-        # 预置场景：若不存在则插入
-        for sid, code, name in [
-            ("research", "research", "调研提示词"),
-            ("ppt_report", "ppt_report", "PPT报告提示词"),
-            ("sales_order", "sales_order", "销售打单提示词"),
-        ]:
-            await conn.execute("""
-                INSERT INTO scenes (id, code, name, is_predefined, team_code)
-                VALUES ($1, $2, $3, TRUE, NULL)
-                ON CONFLICT (code) DO NOTHING;
-            """, sid, code, name)
 
         print("✅ scenes 表创建/更新成功")
     except Exception as e:

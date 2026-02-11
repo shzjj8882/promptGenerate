@@ -13,8 +13,8 @@ sys.path.insert(0, str(project_root))
 
 from app.core.config import settings
 
-# 预置场景代码（不能删除）
-PREDEFINED_SCENE_CODES = {"research", "ppt_report", "sales_order"}
+# 预置场景代码（已移除，空集合表示删除所有场景）
+PREDEFINED_SCENE_CODES = set()
 
 
 async def clear():
@@ -38,17 +38,17 @@ async def clear():
         deleted_placeholders = await conn.execute("DELETE FROM placeholders")
         print(f"   ✅ 已删除所有占位符")
         
-        # 3. 删除非预置场景
-        print("\n3. 删除非预置场景...")
-        # 构建预置场景代码的 SQL IN 子句
-        predefined_codes = list(PREDEFINED_SCENE_CODES)
-        placeholders_str = ','.join([f"'{code}'" for code in predefined_codes])
-        
-        deleted_scenes = await conn.execute(f"""
-            DELETE FROM scenes
-            WHERE code NOT IN ({placeholders_str})
-        """)
-        print(f"   ✅ 已删除所有非预置场景")
+        # 3. 删除所有场景
+        print("\n3. 删除所有场景...")
+        if PREDEFINED_SCENE_CODES:
+            placeholders_str = ','.join([f"'{code}'" for code in PREDEFINED_SCENE_CODES])
+            deleted_scenes = await conn.execute(f"""
+                DELETE FROM scenes
+                WHERE code NOT IN ({placeholders_str})
+            """)
+        else:
+            deleted_scenes = await conn.execute("DELETE FROM scenes")
+        print(f"   ✅ 已删除所有场景")
         
         # 4. 清理场景相关的缓存
         print("\n4. 清理缓存...")
@@ -115,8 +115,7 @@ async def clear():
 
 
 if __name__ == "__main__":
-    print("⚠️  警告：此操作将删除所有占位符和非预置场景数据！")
-    print("预置场景（research, ppt_report, sales_order）将被保留。")
+    print("⚠️  警告：此操作将删除所有占位符和场景数据！")
     print("按 Ctrl+C 取消，或等待 5 秒后继续...")
     
     try:

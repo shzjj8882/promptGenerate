@@ -52,6 +52,8 @@ import { getTable, type MultiDimensionTable, type TableColumn } from "@/lib/api/
 import { cn } from "@/lib/utils";
 import { userStore } from "@/store/user-store";
 import { getLLMModels, type LLMModel } from "@/lib/api/llm-models";
+import { getMCPConfigsForDebug, type MCPConfig } from "@/lib/api/mcp";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface PromptDebugDialogProps {
   open: boolean;
@@ -90,6 +92,11 @@ export function PromptDebugDialog({
   const loadedTableIdsRef = useRef<Set<string>>(new Set());
   // 跟踪哪个占位符的筛选弹出框是打开的
   const [openFilterPopover, setOpenFilterPopover] = useState<string | null>(null);
+  // MCP 配置（用于场景调试中的 MCP 工具调用）
+  const [mcpConfigs, setMcpConfigs] = useState<MCPConfig[]>([]);
+  const [loadingMcps, setLoadingMcps] = useState(false);
+  const [selectedMcpId, setSelectedMcpId] = useState<string>("__none__");
+  const [selectedMcpToolNames, setSelectedMcpToolNames] = useState<Set<string>>(new Set());
 
   const {
     messages,
@@ -107,6 +114,8 @@ export function PromptDebugDialog({
     placeholderParams: debugPlaceholderParams,
     debugMode,
     modelId: selectedModelId,
+    mcpId: selectedMcpId && selectedMcpId !== "__none__" ? selectedMcpId : undefined,
+    mcpToolNames: selectedMcpToolNames.size > 0 ? Array.from(selectedMcpToolNames) : undefined,
   });
 
   // 加载模型列表
@@ -135,6 +144,27 @@ export function PromptDebugDialog({
     };
 
     loadModels();
+  }, [open, isMounted]);
+
+  // 加载 MCP 配置列表
+  useEffect(() => {
+    if (!open || !isMounted) return;
+
+    const loadMcps = async () => {
+      try {
+        setLoadingMcps(true);
+        const response = await getMCPConfigsForDebug();
+        setMcpConfigs(response.items);
+        setSelectedMcpId("__none__");
+        setSelectedMcpToolNames(new Set());
+      } catch (error) {
+        logger.error("加载 MCP 列表失败", error);
+      } finally {
+        setLoadingMcps(false);
+      }
+    };
+
+    loadMcps();
   }, [open, isMounted]);
 
   // 复制 CURL 命令（业务场景，使用团队认证码）
@@ -167,6 +197,12 @@ export function PromptDebugDialog({
     if (selectedModelId) {
       requestBody.model_id = selectedModelId;
     }
+    if (selectedMcpId && selectedMcpId !== "__none__") {
+      requestBody.mcp_id = selectedMcpId;
+      if (selectedMcpToolNames.size > 0) {
+        requestBody.mcp_tool_names = Array.from(selectedMcpToolNames);
+      }
+    }
     if (debugLLMConfig.temperature !== undefined || debugLLMConfig.max_tokens !== undefined) {
       requestBody.llm_config = {};
       if (debugLLMConfig.temperature !== undefined) {
@@ -191,7 +227,7 @@ export function PromptDebugDialog({
     } catch (error) {
       logger.error("复制失败", error);
     }
-  }, [prompt, debugMode, debugTenantCode, debugPlaceholderParams, debugLLMConfig, input]);
+  }, [prompt, debugMode, debugTenantCode, debugPlaceholderParams, debugLLMConfig, input, selectedModelId, selectedMcpId, selectedMcpToolNames]);
 
   // 重置状态
   const handleOpenChange = useCallback((newOpen: boolean) => {
@@ -208,6 +244,8 @@ export function PromptDebugDialog({
       setLoadingTables({});
       loadedTableIdsRef.current.clear();
       setOpenFilterPopover(null);
+      setSelectedMcpId("__none__");
+      setSelectedMcpToolNames(new Set());
     }
     onOpenChange(newOpen);
   }, [reset, onOpenChange]);
@@ -580,6 +618,78 @@ export function PromptDebugDialog({
                     placeholder="留空则不限制"
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* MCP 配置 */}
+            <div className="border rounded-lg p-4 space-y-4 bg-card shadow-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-4 bg-primary rounded-full" />
+                <h3 className="font-semibold text-sm">MCP 服务</h3>
+              </div>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="debug-mcp">选择 MCP 服务</Label>
+                  <Select
+                    value={selectedMcpId}
+                    onValueChange={(id) => {
+                      setSelectedMcpId(id);
+                      const mcp = id && id !== "__none__" ? mcpConfigs.find((c) => c.id === id) : null;
+                      if (mcp?.tools_cache?.length) {
+                        setSelectedMcpToolNames(new Set(mcp.tools_cache.map((t) => t.name)));
+                      } else {
+                        setSelectedMcpToolNames(new Set());
+                      }
+                    }}
+                    disabled={streaming || loadingMcps}
+                  >
+                    <SelectTrigger id="debug-mcp">
+                      <SelectValue placeholder={loadingMcps ? "加载中..." : "不选择（默认）"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">不选择</SelectItem>
+                      {mcpConfigs.map((mcp) => (
+                        <SelectItem key={mcp.id} value={mcp.id}>
+                          {mcp.name}
+                          {mcp.tools_cache?.length ? ` (${mcp.tools_cache.length} 个工具)` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedMcpId && selectedMcpId !== "__none__" && (
+                  <div className="space-y-2">
+                    <Label>勾选可用的 MCP 工具（子功能）</Label>
+                    <div className="max-h-32 overflow-y-auto space-y-2 rounded border p-2 custom-scrollbar">
+                      {mcpConfigs
+                        .find((c) => c.id === selectedMcpId)
+                        ?.tools_cache?.map((tool) => (
+                          <div key={tool.name} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`mcp-tool-${tool.name}`}
+                              checked={selectedMcpToolNames.has(tool.name)}
+                              onCheckedChange={(checked) => {
+                                setSelectedMcpToolNames((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(tool.name);
+                                  else next.delete(tool.name);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <label
+                              htmlFor={`mcp-tool-${tool.name}`}
+                              className="text-sm cursor-pointer flex-1"
+                            >
+                              {tool.title || tool.name}
+                            </label>
+                          </div>
+                        )) ?? (
+                        <div className="text-sm text-muted-foreground">该 MCP 暂无工具</div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

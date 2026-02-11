@@ -27,6 +27,10 @@ async def main():
         ("migrate_api_permissions", "migrate"),
         ("migrate_add_tables_api_permissions", "migrate"),
         ("migrate_add_reset_authcode_permission", "migrate"),
+        ("migrate_remove_team_auth_menu", "migrate"),
+        ("migrate_add_mcp_menu", "migrate"),
+        ("migrate_add_mcp_api_permissions", "migrate"),
+        ("migrate_add_mcp_transport_type", "migrate"),
     ]
     for mod_name, fn_name in scripts:
         try:

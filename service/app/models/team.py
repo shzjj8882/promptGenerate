@@ -25,6 +25,7 @@ class Team(Base):
     # 关系
     llm_models = relationship("LLMModel", back_populates="team", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="team", cascade="all, delete-orphan")
+    mcp_configs = relationship("MCPConfig", back_populates="team", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Team(id={self.id}, code={self.code}, name={self.name}, is_system_admin_team={self.is_system_admin_team})>"

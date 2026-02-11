@@ -188,7 +188,7 @@ async def cached(
     
     Args:
         cache_type: 缓存类型（prompt, tenant 等）
-        key_suffix: key 后缀（如 scene:research:team:xxx）
+        key_suffix: key 后缀（如 scene:dev:team:xxx）
         ttl: TTL（秒），默认使用 CACHE_TTL[cache_type]
         serialize: 序列化函数
         deserialize: 反序列化函数

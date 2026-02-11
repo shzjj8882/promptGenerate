@@ -20,6 +20,8 @@ interface UsePromptDebugOptions {
   placeholderParams: Record<string, any>;
   debugMode: "chat" | "api";
   modelId?: string;
+  mcpId?: string;
+  mcpToolNames?: string[];
 }
 
 /**
@@ -33,6 +35,8 @@ export function usePromptDebug({
   placeholderParams,
   debugMode,
   modelId,
+  mcpId,
+  mcpToolNames,
 }: UsePromptDebugOptions) {
   const [messages, setMessages] = useState<DebugMessage[]>([]);
   const [input, setInput] = useState("");
@@ -83,6 +87,8 @@ export function usePromptDebug({
             additional_params: placeholderParams,
             llm_config: llmConfig,
             model_id: modelId || undefined,
+            mcp_id: mcpId || undefined,
+            mcp_tool_names: mcpToolNames?.length ? mcpToolNames : undefined,
           },
           (chunk: SSEChunk) => {
             // 使用 flushSync 强制同步更新，确保逐字显示
@@ -122,6 +128,8 @@ export function usePromptDebug({
           additional_params: placeholderParams,
           llm_config: llmConfig,
           model_id: modelId || undefined,
+          mcp_id: mcpId || undefined,
+          mcp_tool_names: mcpToolNames?.length ? mcpToolNames : undefined,
         });
 
         setMessages((prev) => {
@@ -146,7 +154,7 @@ export function usePromptDebug({
       });
       setStreaming(false);
     }
-  }, [prompt, input, streaming, debugMode, tenantCode, placeholderParams, llmConfig]);
+  }, [prompt, input, streaming, debugMode, tenantCode, placeholderParams, llmConfig, modelId, mcpId, mcpToolNames]);
 
   // 生成 CURL 命令（业务场景，使用团队认证码）
   const generateCurl = useCallback((): string => {
@@ -182,6 +190,12 @@ export function usePromptDebug({
 
     if (modelId) {
       requestBody.model_id = modelId;
+    }
+    if (mcpId) {
+      requestBody.mcp_id = mcpId;
+    }
+    if (mcpToolNames?.length) {
+      requestBody.mcp_tool_names = mcpToolNames;
     }
     if (llmConfig.temperature !== undefined || llmConfig.max_tokens !== undefined) {
       requestBody.llm_config = {};

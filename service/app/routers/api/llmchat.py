@@ -4,12 +4,15 @@ LLM Chat 相关接口
 from fastapi import APIRouter, Depends, HTTPException, Path, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from pydantic import BaseModel
 from app.core.database import get_db
+from app.core.api_auth import get_team_code_from_auth
 from app.core.response import ResponseModel
 from app.services.prompt_service import PromptService, TenantService, PlaceholderService, PlaceholderDataSourceService
 from app.services.llm_service import LLMService
+from app.services.mcp_service import MCPService, TRANSPORT_SSE
+from app.services.mcp_llm_integration import chat_with_mcp_tools
 from app.core.config import settings
 import re
 import json
@@ -53,6 +56,9 @@ class PromptChatRequest(BaseModel):
     conversation_id: Optional[str] = Body(None, description="会话ID，如果提供则使用会话历史作为上下文")
     # 模型ID（用于指定使用的模型）
     model_id: Optional[str] = Body(None, description="模型ID，如果不提供则使用团队的默认模型")
+    # MCP 配置（用于 LLM 调用 MCP 工具）
+    mcp_id: Optional[str] = Body(None, description="MCP 配置 ID，选择后 LLM 可调用该 MCP 的工具")
+    mcp_tool_names: Optional[List[str]] = Body(None, description="勾选的 MCP 工具名称列表，为空则使用全部工具")
 
 
 class PromptApiRequest(BaseModel):
@@ -69,6 +75,9 @@ class PromptApiRequest(BaseModel):
     conversation_id: Optional[str] = Body(None, description="会话ID，如果提供则使用会话历史作为上下文")
     # 模型ID（用于指定使用的模型）
     model_id: Optional[str] = Body(None, description="模型ID，如果不提供则使用团队的默认模型")
+    # MCP 配置（用于 LLM 调用 MCP 工具）
+    mcp_id: Optional[str] = Body(None, description="MCP 配置 ID")
+    mcp_tool_names: Optional[List[str]] = Body(None, description="勾选的 MCP 工具名称列表")
 
 
 class PromptApiResponse(BaseModel):
@@ -88,6 +97,8 @@ class PromptConvertResponse(BaseModel):
 def check_if_tenant_required(prompt_content: str, placeholders: list) -> bool:
     """
     检查提示词是否需要租户信息
+    
+    提示词中可以没有占位符，此时直接返回 False（不需要租户）。
     
     Args:
         prompt_content: 提示词内容
@@ -139,7 +150,7 @@ async def process_placeholders_in_content(
     team_code: Optional[str] = None,
 ) -> str:
     """
-    处理提示词内容中的占位符
+    处理提示词内容中的占位符。提示词中可以没有占位符，此时原样返回。
     
     支持新格式：
     - 用户输入类型：{input.key} - 从 additional_params 中获取 input.key 的值
@@ -464,8 +475,9 @@ async def process_placeholders_in_content(
 
 @router.post("/llmchat/prompts/{scene}/convert", summary="转换提示词（非流式）", tags=["应用接口 > LLM Chat"])
 async def convert_prompt(
-    scene: str = Path(..., description="场景代码（如：sales_order, research, ppt_report）", examples=["sales_order"]),
+    scene: str = Path(..., description="场景代码（如：dev、custom_scene）", examples=["dev"]),
     request: PromptConvertRequest = Body(...),
+    team_code_from_auth: Optional[str] = Depends(get_team_code_from_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -473,11 +485,12 @@ async def convert_prompt(
     
     根据场景代码获取提示词，并将占位符替换为实际值。
     返回处理后的提示词内容，不调用LLM。
+    当请求体未传 teamCode 时，可从请求头 X-Team-AuthCode 推导团队。
     
     **参数说明：**
     - `scene`: 场景代码（路径参数）
     - `tenantCode`: 租户编号（可选，当提示词包含需要租户信息的占位符时必填）
-    - `teamCode`: 团队代码（可选，用于获取团队的默认提示词）
+    - `teamCode`: 团队代码（可选，未传时可由 X-Team-AuthCode 或 Bearer Token 推导）
     - `additional_params`: 占位符参数（请求体，可选）
     
     **获取逻辑：**
@@ -494,14 +507,15 @@ async def convert_prompt(
     # 1. 获取提示词（优先租户自定义，否则默认）
     tenant_id = None
     
-    # 如果没有提供 teamCode，尝试从场景获取 team_code
+    # team_code 优先级：请求体 teamCode > 场景关联 > X-Team-AuthCode 推导
     team_code = request.teamCode
     if not team_code:
         from app.services.scene_service import SceneService
-        # 先查询全局场景（team_id=None），如果没有再查询其他场景
         scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
         if scene_obj and scene_obj.team_code:
             team_code = scene_obj.team_code
+    if not team_code and team_code_from_auth:
+        team_code = team_code_from_auth
     
     if request.tenantCode:
         tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
@@ -589,8 +603,9 @@ async def convert_prompt(
 
 @router.post("/llmchat/prompts/{scene}/chat", summary="提示词聊天（SSE流式）", tags=["应用接口 > LLM Chat"])
 async def chat_prompt(
-    scene: str = Path(..., description="场景代码（如：sales_order, research, ppt_report）", examples=["sales_order"]),
+    scene: str = Path(..., description="场景代码（如：dev、custom_scene）", examples=["dev"]),
     request: PromptChatRequest = Body(...),
+    team_code_from_auth: Optional[str] = Depends(get_team_code_from_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -601,7 +616,7 @@ async def chat_prompt(
     **参数说明：**
     - `scene`: 场景代码（路径参数）
     - `tenantCode`: 租户编号（可选，当提示词包含需要租户信息的占位符时必填）
-    - `teamCode`: 团队代码（可选，用于获取团队的默认提示词）
+    - `teamCode`: 团队代码（可选，未传时可由 X-Team-AuthCode 或 Bearer Token 推导）
     - `additional_params`: 占位符参数（请求体，可选）
     - `llm_config`: LLM配置（请求体，可选），包含：
       - `temperature`: 温度参数（默认0.3）
@@ -628,14 +643,15 @@ async def chat_prompt(
     # 1. 获取提示词（优先租户自定义，否则默认）
     tenant_id = None
     
-    # 如果没有提供 teamCode，尝试从场景获取 team_code
+    # team_code 优先级：请求体 teamCode > 场景关联 > X-Team-AuthCode 推导
     team_code = request.teamCode
     if not team_code:
         from app.services.scene_service import SceneService
-        # 先查询全局场景（team_id=None），如果没有再查询其他场景
         scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
         if scene_obj and scene_obj.team_code:
             team_code = scene_obj.team_code
+    if not team_code and team_code_from_auth:
+        team_code = team_code_from_auth
     
     if request.tenantCode:
         tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
@@ -785,14 +801,60 @@ async def chat_prompt(
     async def generate_sse_stream():
         full_response = ""
         try:
-            async for chunk in llm_service.chat_stream(
-                messages=messages,
-                temperature=llm_config.temperature or 0.3,
-                max_tokens=llm_config.max_tokens,
-            ):
-                full_response += chunk
-                # SSE格式：data: {content}\n\n
-                yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+            # 若指定了 MCP，使用工具调用循环（非流式内部，最后流式输出结果）
+            if request.mcp_id:
+                mcp = await MCPService.get_by_id(db, request.mcp_id)
+                if not mcp:
+                    yield f"data: {json.dumps({'error': 'MCP 配置不存在'}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                if team_id and mcp.team_id and mcp.team_id != team_id:
+                    yield f"data: {json.dumps({'error': 'MCP 配置不属于当前团队'}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                tools_raw = mcp.tools_cache
+                if isinstance(tools_raw, str):
+                    try:
+                        tools_raw = json.loads(tools_raw) if tools_raw else []
+                    except Exception:
+                        tools_raw = []
+                mcp_tools = tools_raw or []
+                if request.mcp_tool_names:
+                    name_set = set(request.mcp_tool_names)
+                    mcp_tools = [t for t in mcp_tools if t.get("name") in name_set]
+                if not mcp_tools:
+                    yield f"data: {json.dumps({'error': '未找到可用的 MCP 工具'}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                auth_info = None
+                if mcp.auth_info:
+                    try:
+                        auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
+                    except Exception:
+                        pass
+                mcp_transport = getattr(mcp, "transport_type", None) or TRANSPORT_SSE
+                full_response = await chat_with_mcp_tools(
+                    llm_service=llm_service,
+                    messages=messages,
+                    mcp_url=mcp.url,
+                    mcp_tools=mcp_tools,
+                    mcp_auth_info=auth_info,
+                    mcp_transport_type=mcp_transport,
+                    temperature=llm_config.temperature or 0.3,
+                    max_tokens=llm_config.max_tokens,
+                )
+                # 将完整回复作为单个 chunk 流式输出
+                if full_response:
+                    yield f"data: {json.dumps({'content': full_response}, ensure_ascii=False)}\n\n"
+            else:
+                async for chunk in llm_service.chat_stream(
+                    messages=messages,
+                    temperature=llm_config.temperature or 0.3,
+                    max_tokens=llm_config.max_tokens,
+                ):
+                    full_response += chunk
+                    # SSE格式：data: {content}\n\n
+                    yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
             
             # 保存会话消息（如果提供了 conversation_id）
             if request.conversation_id and conversation:
@@ -866,8 +928,9 @@ async def chat_prompt(
 
 @router.post("/llmchat/prompts/{scene}/api", summary="提示词接口模式（非流式）", tags=["应用接口 > LLM Chat"])
 async def api_prompt(
-    scene: str = Path(..., description="场景代码（如：sales_order, research, ppt_report）", examples=["sales_order"]),
+    scene: str = Path(..., description="场景代码（如：dev、custom_scene）", examples=["dev"]),
     request: PromptApiRequest = Body(...),
+    team_code_from_auth: Optional[str] = Depends(get_team_code_from_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -878,7 +941,7 @@ async def api_prompt(
     **参数说明：**
     - `scene`: 场景代码（路径参数）
     - `tenantCode`: 租户编号（可选，当提示词包含需要租户信息的占位符时必填）
-    - `teamCode`: 团队代码（可选，用于获取团队的默认提示词）
+    - `teamCode`: 团队代码（可选，未传时可由 X-Team-AuthCode 或 Bearer Token 推导）
     - `additional_params`: 占位符参数（请求体，可选）
     - `llm_config`: LLM配置（请求体，可选），包含：
       - `temperature`: 温度参数（默认0.3）
@@ -901,14 +964,15 @@ async def api_prompt(
     # 1. 获取提示词（优先租户自定义，否则默认）
     tenant_id = None
     
-    # 如果没有提供 teamCode，尝试从场景获取 team_code
+    # team_code 优先级：请求体 teamCode > 场景关联 > X-Team-AuthCode 推导
     team_code = request.teamCode
     if not team_code:
         from app.services.scene_service import SceneService
-        # 先查询全局场景（team_id=None），如果没有再查询其他场景
         scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
         if scene_obj and scene_obj.team_code:
             team_code = scene_obj.team_code
+    if not team_code and team_code_from_auth:
+        team_code = team_code_from_auth
     
     if request.tenantCode:
         tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
@@ -1056,11 +1120,47 @@ async def api_prompt(
     
     # 7. 调用LLM获取完整回复并保存会话消息
     try:
-        response_text = await llm_service.chat_with_messages(
-            messages=messages,
-            temperature=llm_config.temperature or 0.3,
-            max_tokens=llm_config.max_tokens,
-        )
+        if request.mcp_id:
+            mcp = await MCPService.get_by_id(db, request.mcp_id)
+            if not mcp:
+                raise HTTPException(status_code=404, detail="MCP 配置不存在")
+            if team_id and mcp.team_id and mcp.team_id != team_id:
+                raise HTTPException(status_code=403, detail="MCP 配置不属于当前团队")
+            tools_raw = mcp.tools_cache
+            if isinstance(tools_raw, str):
+                try:
+                    tools_raw = json.loads(tools_raw) if tools_raw else []
+                except Exception:
+                    tools_raw = []
+            mcp_tools = tools_raw or []
+            if request.mcp_tool_names:
+                name_set = set(request.mcp_tool_names)
+                mcp_tools = [t for t in mcp_tools if t.get("name") in name_set]
+            if not mcp_tools:
+                raise HTTPException(status_code=400, detail="未找到可用的 MCP 工具")
+            auth_info = None
+            if mcp.auth_info:
+                try:
+                    auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
+                except Exception:
+                    pass
+            mcp_transport = getattr(mcp, "transport_type", None) or TRANSPORT_SSE
+            response_text = await chat_with_mcp_tools(
+                llm_service=llm_service,
+                messages=messages,
+                mcp_url=mcp.url,
+                mcp_tools=mcp_tools,
+                mcp_auth_info=auth_info,
+                mcp_transport_type=mcp_transport,
+                temperature=llm_config.temperature or 0.3,
+                max_tokens=llm_config.max_tokens,
+            )
+        else:
+            response_text = await llm_service.chat_with_messages(
+                messages=messages,
+                temperature=llm_config.temperature or 0.3,
+                max_tokens=llm_config.max_tokens,
+            )
         
         # 保存会话消息（如果提供了 conversation_id）
         if request.conversation_id and conversation:

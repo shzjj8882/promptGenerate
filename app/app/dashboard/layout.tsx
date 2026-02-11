@@ -55,6 +55,7 @@ const PATH_TO_MENU_CODE: Record<string, string> = {
   "/dashboard/config/tables": "menu:config:tables",
   "/dashboard/config/models": "team_admin", // 模型管理接口需团队管理员或超管，与后端 require_team_admin_or_superuser 一致
   "/dashboard/config/menus": "menu:config:menus",
+  "/dashboard/config/mcp": "menu:config:mcp",
   "/dashboard/config": "config_any", // 配置中心根路径（redirect 到 scenes），需有任一配置相关权限
   "/dashboard/tables": "menu:tables:list",
 };
@@ -66,7 +67,7 @@ function getRequiredMenuCode(pathname: string): string | null {
   return null;
 }
 
-const CONFIG_MENU_CODES = ["menu:config", "menu:config:scenes", "menu:config:placeholders", "menu:config:tables", "menu:config:models", "menu:config:menus"];
+const CONFIG_MENU_CODES = ["menu:config", "menu:config:scenes", "menu:config:placeholders", "menu:config:tables", "menu:config:models", "menu:config:menus", "menu:config:mcp"];
 
 function userHasMenuCode(user: { is_superuser?: boolean; is_team_admin?: boolean; menu_permission_codes?: string[] } | null, code: string): boolean {
   if (!user) return false;
@@ -262,6 +263,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
       "/dashboard/config/tables": { name: "表格配置", code: "menu:config:tables" },
       "/dashboard/config/models": { name: "模型管理", code: "menu:config:models" },
       "/dashboard/config/menus": { name: "菜单配置", code: "menu:config:menus" },
+      "/dashboard/config/mcp": { name: "MCP 配置", code: "menu:config:mcp" },
     };
     
     // 精确匹配子路由

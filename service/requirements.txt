@@ -25,3 +25,8 @@ greenlet>=3.1.1
 httpx>=0.25.0
 orjson>=3.9.0  # 高性能 JSON 序列化库
 
+# MCP (Model Context Protocol) - 可选，需 Python 3.10+
+# 若需 MCP 功能，请使用 Python 3.10+ 并执行: pip install mcp httpx-sse
+# mcp>=1.0.0
+# httpx-sse>=0.4.0
+

@@ -41,7 +41,7 @@ class SalesOrderChatRequest(BaseModel):
     tenant_code_id: str = Field(..., description="租户编号", example="T001")
     user_id: str = Field(..., description="用户ID", example="user_456")
     user_name: str = Field(..., description="用户名称", example="张三")
-    prompt_code: str = Field(..., description="提示词code（场景代码，如：sales_order）", example="sales_order")
+    prompt_code: str = Field(..., description="提示词code（场景代码）", example="dev")
     current_message: Optional[str] = Field(None, description="当前聊天的内容语句（可选，用于记录到上下文）", example="我想了解客户A的情况")
     # 以下字段已废弃，将通过占位符处理自动获取
     company_rag: Optional[str] = Field(None, description="公司RAG（已废弃，将通过占位符处理）")
@@ -57,7 +57,7 @@ class SalesOrderChatRequest(BaseModel):
                 "tenant_code_id": "T001",
                 "user_id": "user_456",
                 "user_name": "张三",
-                "prompt_code": "sales_order",
+                "prompt_code": "dev",
                 "current_message": "我想了解客户A的情况"
             }
         }

@@ -16,7 +16,7 @@ class Conversation(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     
     # 会话基本信息
-    scene = Column(String(100), nullable=False, comment="场景代码（如：sales_order、research）")
+    scene = Column(String(100), nullable=False, comment="场景代码")
     team_id = Column(String, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, comment="团队ID")
     tenant_id = Column(String, ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True, comment="租户ID（可选）")
     

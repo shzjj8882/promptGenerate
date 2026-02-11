@@ -194,10 +194,12 @@ app/
 
 ### 环境要求
 
-- Python 3.9+
+- Python 3.9+（MCP 功能需 Python 3.10+）
 - Node.js 18+
 - PostgreSQL 12+
 - Redis 6+
+
+**MCP 功能（可选）：** 需 Python 3.10+，安装后执行 `pip install -r requirements-mcp.txt`
 
 ### 后端启动
 
@@ -208,7 +210,7 @@ cd service
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 2. 安装依赖
+# 2. 安装依赖（MCP 可选：pip install -r requirements-mcp.txt）
 pip install -r requirements.txt
 
 # 3. 配置环境变量
@@ -293,7 +295,7 @@ pnpm dev
 
 - **users** - 用户表
 - **teams** - 团队表
-- **scenes** - 场景表（预置场景：research、ppt_report、sales_order）
+- **scenes** - 场景表（场景由管理后台创建）
 - **prompts** - 提示词表
 - **placeholders** - 占位符表
 - **tenants** - 租户表

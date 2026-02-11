@@ -3,7 +3,7 @@ Admin 路由统一入口
 组合所有 admin 子路由
 """
 from fastapi import APIRouter
-from app.routers.admin import auth, prompts, tenants, scenes, rbac, teams, multi_dimension_tables, llm_models, conversations
+from app.routers.admin import auth, prompts, tenants, scenes, rbac, teams, multi_dimension_tables, llm_models, conversations, mcp
 
 router = APIRouter()
 
@@ -33,4 +33,7 @@ router.include_router(llm_models.router, tags=["管理接口 > 模型管理"])
 
 # 注册会话管理相关路由
 router.include_router(conversations.router, tags=["管理接口 > 会话管理"])
+
+# 注册 MCP 配置相关路由
+router.include_router(mcp.router, tags=["管理接口 > MCP 配置"])
 

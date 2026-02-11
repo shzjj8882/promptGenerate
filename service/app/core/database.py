@@ -47,6 +47,7 @@ async def init_db():
     from app.models.rbac import Role, Permission
     from app.models.llm_model import LLMModel
     from app.models.conversation import Conversation, ConversationMessage
+    from app.models.mcp import MCPConfig
     
     # 初始化 Redis
     redis_pool = redis.ConnectionPool(

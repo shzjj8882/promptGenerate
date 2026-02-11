@@ -181,6 +181,9 @@ async def startup_event():
             migrate_add_tables_api_permissions,
             migrate_add_reset_authcode_permission,
             migrate_remove_team_auth_menu,
+            migrate_add_mcp_menu,
+            migrate_add_mcp_api_permissions,
+            migrate_add_mcp_transport_type,
         )
 
         # 这些脚本内部都使用 asyncpg 并带有「IF NOT EXISTS / 已存在则跳过」等幂等逻辑
@@ -197,6 +200,9 @@ async def startup_event():
         await migrate_add_tables_api_permissions.migrate()
         await migrate_add_reset_authcode_permission.migrate()
         await migrate_remove_team_auth_menu.migrate()
+        await migrate_add_mcp_menu.migrate()
+        await migrate_add_mcp_api_permissions.migrate()
+        await migrate_add_mcp_transport_type.migrate()
         logger.info("RBAC / 菜单相关迁移脚本已在启动时自动执行完成")
         # 迁移完成后清除菜单树和用户权限缓存，避免用户仍拿到迁移前的旧缓存（空菜单、缺接口权限）
         try:

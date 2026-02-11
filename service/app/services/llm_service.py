@@ -1,10 +1,31 @@
 """
 LLM服务 - 集成DeepSeek API（HTTP 客户端复用优化）
+支持 OpenAI 兼容的 function calling / tools
 """
 import httpx
 import json
-from typing import Optional, Dict, Any, AsyncIterator
+from typing import Optional, Dict, Any, AsyncIterator, List
 from app.core.config import settings
+
+
+def mcp_tools_to_openai_format(mcp_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    将 MCP 工具列表转换为 OpenAI function calling 格式
+    """
+    tools = []
+    for t in mcp_tools:
+        name = t.get("name") or ""
+        desc = t.get("description") or t.get("title") or ""
+        schema = t.get("inputSchema") or {"type": "object", "properties": {}}
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": desc,
+                "parameters": schema,
+            },
+        })
+    return tools
 
 
 class LLMService:
@@ -97,6 +118,43 @@ class LLMService:
         response = await client.post(url, headers=headers, json=payload)
         response.raise_for_status()
         return response.json()
+
+    async def chat_with_tools(
+        self,
+        messages: list,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+        temperature: float = 0.3,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        调用 LLM，支持 tools（function calling）
+        返回完整 API 响应，包含可能的 tool_calls
+        """
+        if not self.api_key:
+            raise ValueError("DEEPSEEK_API_KEY未配置")
+        
+        url = f"{self.api_base}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice if tool_choice else "auto"
+        
+        client = await LLMService.get_client()
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()
     
     async def chat_with_messages(
         self,
@@ -161,7 +219,23 @@ class LLMService:
         
         client = await LLMService.get_stream_client()
         async with client.stream("POST", url, headers=headers, json=payload) as response:
-            response.raise_for_status()
+            if response.status_code != 200:
+                body = await response.aread()
+                err_msg = body.decode()[:500] if body else str(response.status_code)
+                try:
+                    ej = json.loads(body.decode()) if body else {}
+                    if isinstance(ej.get("error"), dict):
+                        err_msg = ej["error"].get("message", err_msg)
+                    elif ej.get("message"):
+                        err_msg = ej["message"]
+                except Exception:
+                    pass
+                import logging
+                logging.getLogger(__name__).error(
+                    "DeepSeek API 错误 status=%d: %s | model=%s",
+                    response.status_code, err_msg, payload.get("model"),
+                )
+                response.raise_for_status()
             async for line in response.aiter_lines():
                 if line:
                     # SSE格式：data: {...}

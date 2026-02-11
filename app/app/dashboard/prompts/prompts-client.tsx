@@ -27,7 +27,7 @@ import { usePromptForm } from "./hooks/use-prompt-form";
 // ==================== 类型定义 ====================
 
 // 场景类型
-export type PromptScene = "research" | "ppt_report" | "sales_order" | string;
+export type PromptScene = string;
 
 export type Scene = {
   id: string;

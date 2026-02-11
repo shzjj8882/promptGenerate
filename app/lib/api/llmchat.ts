@@ -21,6 +21,8 @@ export interface PromptChatRequest {
   user_message: string;
   conversation_id?: string;
   model_id?: string;
+  mcp_id?: string;
+  mcp_tool_names?: string[];
 }
 
 export interface PromptApiRequest {
@@ -30,6 +32,8 @@ export interface PromptApiRequest {
   user_message: string;
   conversation_id?: string;
   model_id?: string;
+  mcp_id?: string;
+  mcp_tool_names?: string[];
 }
 
 export interface PromptApiResponse {
