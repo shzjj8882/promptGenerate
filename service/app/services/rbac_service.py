@@ -972,6 +972,7 @@ class RoleService:
                     "menu:config:scenes",
                     "menu:config:placeholders",
                     "menu:config:mcp",
+                    "menu:config:notification",
                     "menu:tables:list",          # 多维表格
                     # 权限管理相关（团队管理员可以给自己团队分配角色）
                     "menu:rbac",

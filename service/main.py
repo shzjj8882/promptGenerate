@@ -154,6 +154,9 @@ app.include_router(api.router, prefix="/api")
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化数据库"""
+    # 配置应用日志（INFO 级别，便于查看 LLMChatTask 等任务状态）
+    logging.getLogger("app").setLevel(logging.INFO)
+
     # 注意：这里假设数据库已经存在
     # 如果数据库不存在，请先运行 python3 scripts/init_db.py 创建数据库
     await init_db()
@@ -184,6 +187,11 @@ async def startup_event():
             migrate_add_mcp_menu,
             migrate_add_mcp_api_permissions,
             migrate_add_mcp_transport_type,
+            migrate_add_notification_configs,
+            migrate_add_llmchat_tasks,
+            migrate_add_notification_menu,
+            migrate_add_notification_api_permissions,
+            migrate_add_notification_menu_config,
         )
 
         # 这些脚本内部都使用 asyncpg 并带有「IF NOT EXISTS / 已存在则跳过」等幂等逻辑
@@ -203,6 +211,11 @@ async def startup_event():
         await migrate_add_mcp_menu.migrate()
         await migrate_add_mcp_api_permissions.migrate()
         await migrate_add_mcp_transport_type.migrate()
+        await migrate_add_notification_configs.migrate()
+        await migrate_add_llmchat_tasks.migrate()
+        await migrate_add_notification_menu.migrate()
+        await migrate_add_notification_api_permissions.migrate()
+        await migrate_add_notification_menu_config.migrate()
         logger.info("RBAC / 菜单相关迁移脚本已在启动时自动执行完成")
         # 迁移完成后清除菜单树和用户权限缓存，避免用户仍拿到迁移前的旧缓存（空菜单、缺接口权限）
         try:

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
     REDIS_DB: int = 0
+
+    # LLM Chat 异步任务队列（Redis Stream）
+    LLMCHAT_STREAM_NAME: str = Field(default="llmchat:tasks", description="异步任务队列 Stream 名称")
     
     # CORS 配置（从环境变量读取，支持逗号分隔）
     # 先定义为字符串类型，然后在验证器中转换为列表

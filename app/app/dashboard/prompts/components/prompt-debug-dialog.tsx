@@ -53,6 +53,7 @@ import { cn } from "@/lib/utils";
 import { userStore } from "@/store/user-store";
 import { getLLMModels, type LLMModel } from "@/lib/api/llm-models";
 import { getMCPConfigsForDebug, type MCPConfig } from "@/lib/api/mcp";
+import { getNotificationConfigsForDebug } from "@/lib/api/notification-config";
 import { Checkbox } from "@/components/ui/checkbox";
 
 interface PromptDebugDialogProps {
@@ -97,6 +98,11 @@ export function PromptDebugDialog({
   const [loadingMcps, setLoadingMcps] = useState(false);
   const [selectedMcpId, setSelectedMcpId] = useState<string>("__none__");
   const [selectedMcpToolNames, setSelectedMcpToolNames] = useState<Set<string>>(new Set());
+  // 通知配置（仅接口模式）
+  const [notificationType, setNotificationType] = useState<"none" | "email">("none");
+  const [notificationEmailTo, setNotificationEmailTo] = useState("");
+  const [notificationConfigs, setNotificationConfigs] = useState<Array<{ id: string; type: string; name: string }>>([]);
+  const [loadingNotificationConfigs, setLoadingNotificationConfigs] = useState(false);
 
   const {
     messages,
@@ -116,6 +122,10 @@ export function PromptDebugDialog({
     modelId: selectedModelId,
     mcpId: selectedMcpId && selectedMcpId !== "__none__" ? selectedMcpId : undefined,
     mcpToolNames: selectedMcpToolNames.size > 0 ? Array.from(selectedMcpToolNames) : undefined,
+    notification:
+      debugMode === "api" && notificationType !== "none"
+        ? { type: notificationType, email_to: notificationEmailTo?.trim() }
+        : undefined,
   });
 
   // 加载模型列表
@@ -246,6 +256,8 @@ export function PromptDebugDialog({
       setOpenFilterPopover(null);
       setSelectedMcpId("__none__");
       setSelectedMcpToolNames(new Set());
+      setNotificationType("none");
+      setNotificationEmailTo("");
     }
     onOpenChange(newOpen);
   }, [reset, onOpenChange]);
@@ -289,6 +301,16 @@ export function PromptDebugDialog({
     fetchTables();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prompt?.scene, placeholders.map(p => `${p.key}-${p.table_id}`).join(",")]);
+
+  // 接口模式下获取通知配置列表（用于邮件通知选项）
+  useEffect(() => {
+    if (!open || debugMode !== "api") return;
+    setLoadingNotificationConfigs(true);
+    getNotificationConfigsForDebug()
+      .then(setNotificationConfigs)
+      .catch(() => setNotificationConfigs([]))
+      .finally(() => setLoadingNotificationConfigs(false));
+  }, [open, debugMode]);
 
   if (!prompt) return null;
 
@@ -524,6 +546,46 @@ export function PromptDebugDialog({
                     />
                   </div>
                 </div>
+                {debugMode === "api" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="notification-type" className="text-sm">
+                      通知方式
+                    </Label>
+                    <Select
+                      value={notificationType}
+                      onValueChange={(v) => {
+                        setNotificationType(v as "none" | "email");
+                        if (v === "none") setNotificationEmailTo("");
+                      }}
+                      disabled={streaming || loadingNotificationConfigs}
+                    >
+                      <SelectTrigger id="notification-type">
+                        <SelectValue placeholder="选择通知方式" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">无</SelectItem>
+                        {notificationConfigs.some((c) => c.type === "email") && (
+                          <SelectItem value="email">邮件通知</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {notificationType === "email" && (
+                      <div className="space-y-2">
+                        <Label htmlFor="notification-email" className="text-sm">
+                          收件人邮箱
+                        </Label>
+                        <Input
+                          id="notification-email"
+                          type="email"
+                          placeholder="example@example.com"
+                          value={notificationEmailTo}
+                          onChange={(e) => setNotificationEmailTo(e.target.value)}
+                          disabled={streaming}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="pt-2 border-t">
                   <Button
                     type="button"

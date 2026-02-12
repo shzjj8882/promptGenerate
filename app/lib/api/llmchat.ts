@@ -25,8 +25,15 @@ export interface PromptChatRequest {
   mcp_tool_names?: string[];
 }
 
+export interface NotificationOption {
+  type?: "none" | "email";
+  config_id?: string;
+  email_to?: string;
+}
+
 export interface PromptApiRequest {
   tenantCode?: string;
+  teamCode?: string;
   additional_params?: Record<string, any>;
   llm_config?: LLMConfig;
   user_message: string;
@@ -34,12 +41,19 @@ export interface PromptApiRequest {
   model_id?: string;
   mcp_id?: string;
   mcp_tool_names?: string[];
+  notification?: NotificationOption;
 }
 
 export interface PromptApiResponse {
   content: string;
   scene: string;
   tenant_id: string;
+}
+
+export interface PromptApiAsyncResponse {
+  task_id: string;
+  status: string;
+  message?: string;
 }
 
 export interface SSEChunk {
@@ -168,13 +182,12 @@ export async function streamPromptChat(
 
 /**
  * 调用接口模式（非流式）
- * @param scene 场景代码
- * @param request 请求参数
+ * 无通知时同步返回 content；有通知时异步返回 task_id
  */
 export async function apiPrompt(
   scene: string,
   request: PromptApiRequest
-): Promise<PromptApiResponse> {
+): Promise<PromptApiResponse | PromptApiAsyncResponse> {
   const url = buildApiUrl(`/api/llmchat/prompts/${scene}/api`);
   const token = getAuthToken();
 
@@ -194,6 +207,43 @@ export async function apiPrompt(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: `HTTP error! status: ${response.status}` }));
+    throw new Error(error.message || `HTTP error! status: ${response.status}`);
+  }
+
+  const result = await response.json();
+  return result.data;
+}
+
+/**
+ * 查询异步任务状态
+ */
+export async function getLLMChatTask(taskId: string): Promise<{
+  task_id: string;
+  status: string;
+  scene: string;
+  result_content?: string;
+  error_message?: string;
+  created_at?: string;
+  completed_at?: string;
+}> {
+  const url = buildApiUrl(`/api/llmchat/tasks/${taskId}`);
+  const token = getAuthToken();
+
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.message || `HTTP error! status: ${response.status}`);
   }
 

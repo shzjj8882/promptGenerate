@@ -7,11 +7,15 @@ from app.models.multi_dimension_table import MultiDimensionTable, MultiDimension
 from app.models.llm_model import LLMModel
 from app.models.conversation import Conversation, ConversationMessage
 from app.models.mcp import MCPConfig
+from app.models.notification_config import NotificationConfig
+from app.models.llmchat_task import LLMChatTask
 
 __all__ = [
     "Prompt", "Tenant", "Placeholder", "PlaceholderDataSource", 
     "User", "DMUReport", "CustomerHistory", 
     "Team", "Scene", 
     "MultiDimensionTable", "MultiDimensionTableRow", "MultiDimensionTableCell",
-    "LLMModel", "Conversation", "ConversationMessage", "MCPConfig"
+    "LLMModel", "Conversation", "ConversationMessage", "MCPConfig",
+    "NotificationConfig",
+    "LLMChatTask",
 ]

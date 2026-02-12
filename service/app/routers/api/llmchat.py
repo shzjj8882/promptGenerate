@@ -61,6 +61,13 @@ class PromptChatRequest(BaseModel):
     mcp_tool_names: Optional[List[str]] = Body(None, description="勾选的 MCP 工具名称列表，为空则使用全部工具")
 
 
+class NotificationOption(BaseModel):
+    """通知选项"""
+    type: Optional[str] = Body(None, description="通知类型：none | email")
+    config_id: Optional[str] = Body(None, description="通知配置 ID（如邮件配置）")
+    email_to: Optional[str] = Body(None, description="收件人邮箱（邮件通知时必填）")
+
+
 class PromptApiRequest(BaseModel):
     """提示词接口模式请求（非流式）"""
     tenantCode: Optional[str] = Body(None, description="租户编号（当提示词包含需要租户信息的占位符时必填）")
@@ -78,6 +85,8 @@ class PromptApiRequest(BaseModel):
     # MCP 配置（用于 LLM 调用 MCP 工具）
     mcp_id: Optional[str] = Body(None, description="MCP 配置 ID")
     mcp_tool_names: Optional[List[str]] = Body(None, description="勾选的 MCP 工具名称列表")
+    # 通知选项：无通知=同步，有通知=异步（返回 task_id，Worker 完成后发邮件）
+    notification: Optional[NotificationOption] = Body(None, description="通知选项，不传或 type=none 则为同步模式")
 
 
 class PromptApiResponse(BaseModel):
@@ -471,6 +480,33 @@ async def process_placeholders_in_content(
         processed_content = processed_content.replace(f"{{ {placeholder_key} }}", str(value))
     
     return processed_content
+
+
+@router.get("/llmchat/tasks/{task_id}", summary="查询异步任务状态", tags=["应用接口 > LLM Chat"])
+async def get_llmchat_task(
+    task_id: str = Path(..., description="任务ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    查询异步任务状态（无需认证）
+    当 api 接口使用邮件通知时返回 task_id，可轮询此接口获取 status 和 result_content
+    """
+    from app.services.llmchat_task_service import LLMChatTaskService
+    task = await LLMChatTaskService.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return ResponseModel.success_response(
+        data={
+            "task_id": task.id,
+            "status": task.status,
+            "scene": task.scene,
+            "result_content": task.result_content if task.status == "completed" else None,
+            "error_message": task.error_message if task.status == "failed" else None,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        },
+        message="获取成功"
+    )
 
 
 @router.post("/llmchat/prompts/{scene}/convert", summary="转换提示词（非流式）", tags=["应用接口 > LLM Chat"])
@@ -1016,6 +1052,37 @@ async def api_prompt(
         team = await TeamService.get_team_by_code(db, team_code)
         if team:
             team_id = team.id
+
+    # 2.5 异步模式：有通知时创建任务、推队列、立即返回 task_id
+    notif = request.notification
+    if notif and notif.type and notif.type != "none":
+        if notif.type == "email" and notif.email_to:
+            from app.services.llmchat_task_service import LLMChatTaskService
+            request_dict = {
+                "tenantCode": request.tenantCode,
+                "teamCode": request.teamCode or team_code,
+                "additional_params": request.additional_params or {},
+                "user_message": request.user_message,
+                "model_id": request.model_id,
+                "llm_config": request.llm_config.model_dump() if request.llm_config else {},
+                "conversation_id": request.conversation_id,
+                "mcp_id": request.mcp_id,
+                "mcp_tool_names": request.mcp_tool_names,
+            }
+            task = await LLMChatTaskService.create_task(
+                db=db,
+                scene=scene,
+                request_payload=request_dict,
+                team_id=team_id,
+                notification_type="email",
+                notification_config={"email_to": notif.email_to, "config_id": notif.config_id},
+            )
+            await db.commit()
+            return ResponseModel.success_response(
+                data={"task_id": task.id, "status": "pending", "message": "任务已提交，完成后将发送邮件通知"},
+                message="异步任务已创建"
+            )
+        raise HTTPException(status_code=400, detail="邮件通知需提供 email_to")
     
     # 3. 获取占位符配置，检查是否需要租户信息（使用 Service 层，按团队过滤）
     placeholders = await PlaceholderService.get_placeholders_by_scene(

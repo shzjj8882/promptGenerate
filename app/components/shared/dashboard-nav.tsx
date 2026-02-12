@@ -154,10 +154,15 @@ function filterMenuTreeByBackendPermission(
     });
 }
 
+interface DashboardNavProps {
+  /** 移动端菜单强制展开（覆盖 sidebarCollapsed） */
+  collapsedOverride?: boolean;
+}
+
 /** 仅客户端渲染的侧栏导航，由 layout 通过 dynamic(ssr:false) 引入，避免 hydration 不匹配 */
-const DashboardNavImpl = () => {
+const DashboardNavImpl = ({ collapsedOverride }: DashboardNavProps = {}) => {
   const pathname = usePathname();
-  const collapsed = uiStore.sidebarCollapsed;
+  const collapsed = collapsedOverride ?? uiStore.sidebarCollapsed;
   // 直接从 store 读取菜单树（MobX 会自动响应式更新）
   const rawMenuTree = userStore.menuTree;
   const menuTree = filterMenuTreeByBackendPermission(rawMenuTree, userStore.user);

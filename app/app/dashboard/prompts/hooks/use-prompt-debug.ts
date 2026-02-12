@@ -12,6 +12,12 @@ interface DebugMessage {
   content: string;
 }
 
+interface NotificationOption {
+  type?: "none" | "email";
+  config_id?: string;
+  email_to?: string;
+}
+
 interface UsePromptDebugOptions {
   prompt: Prompt | null;
   tenantCode: string;
@@ -22,6 +28,7 @@ interface UsePromptDebugOptions {
   modelId?: string;
   mcpId?: string;
   mcpToolNames?: string[];
+  notification?: NotificationOption;
 }
 
 /**
@@ -37,6 +44,7 @@ export function usePromptDebug({
   modelId,
   mcpId,
   mcpToolNames,
+  notification,
 }: UsePromptDebugOptions) {
   const [messages, setMessages] = useState<DebugMessage[]>([]);
   const [input, setInput] = useState("");
@@ -122,7 +130,7 @@ export function usePromptDebug({
         );
       } else {
         // 接口模式：使用 HTTP 请求
-        const response = await apiPrompt(prompt.scene, {
+        const request: any = {
           user_message: userMessage,
           tenantCode: tenantCode?.trim() || undefined,
           additional_params: placeholderParams,
@@ -130,17 +138,38 @@ export function usePromptDebug({
           model_id: modelId || undefined,
           mcp_id: mcpId || undefined,
           mcp_tool_names: mcpToolNames?.length ? mcpToolNames : undefined,
-        });
+        };
+        if (notification?.type && notification.type !== "none" && notification.email_to) {
+          request.notification = {
+            type: notification.type,
+            config_id: notification.config_id,
+            email_to: notification.email_to,
+          };
+        }
+        const response = await apiPrompt(prompt.scene, request);
 
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          const lastMessage = newMessages[newMessages.length - 1];
-          if (lastMessage && lastMessage.role === "assistant") {
-            lastMessage.content = response.content || "无响应";
-          }
-          return newMessages;
-        });
-        setStreaming(false);
+        if ("task_id" in response) {
+          // 异步模式（生产者-消费者）：任务已入队，Worker 消费后发邮件，前端不轮询
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage && lastMessage.role === "assistant") {
+              lastMessage.content = "任务已提交，完成后将发送邮件通知。任务ID: " + response.task_id;
+            }
+            return newMessages;
+          });
+          setStreaming(false);
+        } else {
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage && lastMessage.role === "assistant") {
+              lastMessage.content = response.content || "无响应";
+            }
+            return newMessages;
+          });
+          setStreaming(false);
+        }
       }
     } catch (error) {
       logger.error("发送调试消息失败", error);
@@ -154,7 +183,7 @@ export function usePromptDebug({
       });
       setStreaming(false);
     }
-  }, [prompt, input, streaming, debugMode, tenantCode, placeholderParams, llmConfig, modelId, mcpId, mcpToolNames]);
+  }, [prompt, input, streaming, debugMode, tenantCode, placeholderParams, llmConfig, modelId, mcpId, mcpToolNames, notification]);
 
   // 生成 CURL 命令（业务场景，使用团队认证码）
   const generateCurl = useCallback((): string => {
@@ -197,6 +226,13 @@ export function usePromptDebug({
     if (mcpToolNames?.length) {
       requestBody.mcp_tool_names = mcpToolNames;
     }
+    if (notification?.type && notification.type !== "none" && notification.email_to) {
+      requestBody.notification = {
+        type: notification.type,
+        config_id: notification.config_id,
+        email_to: notification.email_to,
+      };
+    }
     if (llmConfig.temperature !== undefined || llmConfig.max_tokens !== undefined) {
       requestBody.llm_config = {};
       if (llmConfig.temperature !== undefined) {
@@ -217,7 +253,7 @@ export function usePromptDebug({
   -d '${JSON.stringify(requestBody, null, 2)}'`;
 
     return curlCommand;
-  }, [prompt, debugMode, input, tenantCode, placeholderParams, llmConfig, modelId]);
+  }, [prompt, debugMode, input, tenantCode, placeholderParams, llmConfig, modelId, notification]);
 
   return {
     messages,

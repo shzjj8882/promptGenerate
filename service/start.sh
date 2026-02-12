@@ -59,6 +59,16 @@ $VENV_PYTHON scripts/init_db.py
 echo "预检查迁移脚本..."
 PYTHONPATH=. $VENV_PYTHON scripts/verify_startup_migrations.py || exit 1
 
+# 启动 LLMChat Worker（异步任务消费者，后台运行）
+echo "启动 LLMChat Worker..."
+PYTHONPATH=. $VENV_PYTHON scripts/llmchat_worker.py &
+WORKER_PID=$!
+echo "Worker PID: $WORKER_PID"
+
+# 退出时清理 Worker
+cleanup() { kill $WORKER_PID 2>/dev/null; }
+trap cleanup EXIT
+
 # 启动服务
 echo "启动服务..."
 venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000

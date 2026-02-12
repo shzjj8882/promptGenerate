@@ -1,7 +1,7 @@
 /**
  * 菜单配置：菜单 code 到路径和图标的映射
  */
-import { Building2, BookOpenText, MessageSquareText, Shield, Users, Settings, Layers, FileText, Table, UserCog, Menu, Cpu, Plug } from "lucide-react";
+import { Building2, BookOpenText, MessageSquareText, Shield, Users, Settings, Layers, FileText, Table, UserCog, Menu, Cpu, Plug, Mail } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
 /**
@@ -20,6 +20,7 @@ export const MENU_CODE_TO_HREF: Record<string, string> = {
   "menu:config:tables": "/dashboard/config/tables",
   "menu:config:models": "/dashboard/config/models", // 模型管理菜单
   "menu:config:mcp": "/dashboard/config/mcp", // MCP 配置菜单
+  "menu:config:notification": "/dashboard/config/notification", // 通知中心
   "menu:tables:list": "/dashboard/tables", // 独立的多维表格菜单
   "menu:teams:list": "/dashboard/teams", // 团队管理菜单（仅系统管理员可见）
 };
@@ -41,6 +42,7 @@ export const MENU_CODE_TO_ICON: Record<string, LucideIcon> = {
   "menu:config:tables": Table,
   "menu:config:models": Cpu,
   "menu:config:mcp": Plug,
+  "menu:config:notification": Mail,
   "menu:tables:list": Table,
 };
 

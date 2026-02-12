@@ -23,6 +23,12 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
   Building2,
   BookOpenText,
   MessageSquareText,
@@ -30,6 +36,7 @@ import {
   Sparkles,
   LogOut,
   Shield,
+  Menu,
 } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { uiStore } from "@/store/ui-store";
@@ -56,6 +63,7 @@ const PATH_TO_MENU_CODE: Record<string, string> = {
   "/dashboard/config/models": "team_admin", // 模型管理接口需团队管理员或超管，与后端 require_team_admin_or_superuser 一致
   "/dashboard/config/menus": "menu:config:menus",
   "/dashboard/config/mcp": "menu:config:mcp",
+  "/dashboard/config/notification": "menu:config:notification",
   "/dashboard/config": "config_any", // 配置中心根路径（redirect 到 scenes），需有任一配置相关权限
   "/dashboard/tables": "menu:tables:list",
 };
@@ -67,7 +75,7 @@ function getRequiredMenuCode(pathname: string): string | null {
   return null;
 }
 
-const CONFIG_MENU_CODES = ["menu:config", "menu:config:scenes", "menu:config:placeholders", "menu:config:tables", "menu:config:models", "menu:config:menus", "menu:config:mcp"];
+const CONFIG_MENU_CODES = ["menu:config", "menu:config:scenes", "menu:config:placeholders", "menu:config:tables", "menu:config:models", "menu:config:menus", "menu:config:mcp", "menu:config:notification"];
 
 function userHasMenuCode(user: { is_superuser?: boolean; is_team_admin?: boolean; menu_permission_codes?: string[] } | null, code: string): boolean {
   if (!user) return false;
@@ -264,6 +272,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
       "/dashboard/config/models": { name: "模型管理", code: "menu:config:models" },
       "/dashboard/config/menus": { name: "菜单配置", code: "menu:config:menus" },
       "/dashboard/config/mcp": { name: "MCP 配置", code: "menu:config:mcp" },
+      "/dashboard/config/notification": { name: "通知中心", code: "menu:config:notification" },
     };
     
     // 精确匹配子路由
@@ -405,6 +414,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
   const collapsed = uiStore.sidebarCollapsed;
   const [mounted, setMounted] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // 直接使用 store 中的菜单树，而不是本地状态
   const menuTree = userStore.menuTree;
   
@@ -421,6 +431,11 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
     setMounted(true);
     setToken(getAuthToken());
   }, []);
+
+  // 移动端：路由切换时关闭菜单
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
 
   // 页面加载/刷新时：并行请求用户信息和菜单树（优化首次加载速度）
   useEffect(() => {
@@ -511,10 +526,10 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
       className="flex min-h-screen bg-background text-foreground"
       style={{ contain: "layout style paint" }}
     >
-      {/* 左侧菜单 */}
+      {/* 左侧菜单（移动端隐藏，改由 Sheet 展示） */}
       <aside
         className={cn(
-          "flex flex-col border-r border-zinc-800 bg-black text-zinc-50 transition-all duration-200 h-screen overflow-hidden",
+          "hidden sm:flex flex-col border-r border-zinc-800 bg-black text-zinc-50 transition-all duration-200 h-screen overflow-hidden",
           collapsed ? "w-16" : "w-60"
         )}
       >
@@ -537,13 +552,23 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
       {/* 右侧内容区域 */}
       <div className="flex flex-1 flex-col h-screen overflow-hidden">
         {/* Header */}
-        <header className="flex h-16 items-center justify-between border-b border-border bg-card px-6">
+        <header className="flex h-16 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
           <div className="flex items-center gap-3">
+            {/* 移动端：汉堡菜单 */}
+            <button
+              type="button"
+              aria-label="打开菜单"
+              onClick={() => setMobileMenuOpen(true)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground sm:hidden"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            {/* PC 端：侧边栏折叠按钮 */}
             <button
               type="button"
               aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
               onClick={() => uiStore.toggleSidebar()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              className="hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground sm:inline-flex"
             >
               <PanelLeft
                 className={cn(
@@ -552,7 +577,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
                 )}
               />
             </button>
-            <h1 className="text-lg font-semibold">{meta.title}</h1>
+            <h1 className="text-base font-semibold truncate sm:text-lg">{meta.title}</h1>
           </div>
           <div className="flex items-center gap-4">
             <ThemeToggle />
@@ -602,9 +627,27 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
           </div>
         </header>
 
+        {/* 移动端：左侧滑出菜单 */}
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetContent
+            side="left"
+            className="flex flex-col gap-0 border-r border-zinc-800 bg-black p-0 text-zinc-50 w-[280px] max-w-[85vw] rounded-none [&>button]:text-zinc-400 [&>button]:hover:text-zinc-50 [&>button]:right-4 [&>button]:top-4"
+          >
+            <SheetHeader className="flex flex-row items-center gap-2 border-b border-zinc-800 px-4 py-4">
+              <Sparkles className="h-5 w-5 text-zinc-100" />
+              <SheetTitle className="text-base font-semibold tracking-tight text-zinc-50">
+                AILY 控制台
+              </SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 overflow-y-auto py-4">
+              <DashboardNav collapsedOverride={false} />
+            </div>
+          </SheetContent>
+        </Sheet>
+
         {/* Main 内容区域 */}
-        <main className="flex flex-1 flex-col overflow-hidden bg-zinc-100 p-4 dark:bg-zinc-950">
-          <div className="mb-4">
+        <main className="flex flex-1 flex-col overflow-hidden bg-zinc-100 p-0 sm:p-4 dark:bg-zinc-950">
+          <div className="mb-4 hidden sm:block">
             <Breadcrumb>
               <BreadcrumbList>
                 {meta.crumbs.map((c, idx) => {

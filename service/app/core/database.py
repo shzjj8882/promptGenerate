@@ -48,6 +48,8 @@ async def init_db():
     from app.models.llm_model import LLMModel
     from app.models.conversation import Conversation, ConversationMessage
     from app.models.mcp import MCPConfig
+    from app.models.notification_config import NotificationConfig
+    from app.models.llmchat_task import LLMChatTask
     
     # 初始化 Redis
     redis_pool = redis.ConnectionPool(
