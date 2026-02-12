@@ -81,7 +81,7 @@ export function RegisterForm() {
     <Card className="w-full max-w-sm">
       <CardHeader>
         <CardTitle className="text-center text-2xl font-semibold">
-          注册 AILY 控制台
+          注册 PromptHub 控制台
         </CardTitle>
       </CardHeader>
       <CardContent>

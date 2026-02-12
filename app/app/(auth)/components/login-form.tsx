@@ -78,7 +78,7 @@ export function LoginForm() {
     <Card className="w-full max-w-sm">
       <CardHeader>
         <CardTitle className="text-center text-2xl font-semibold">
-          登录 AILY 控制台
+          登录 PromptHub 控制台
         </CardTitle>
         <CardDescription className="text-center">
           请输入您的用户名和密码

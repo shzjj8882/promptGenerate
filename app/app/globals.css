@@ -4,6 +4,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
+html {
+  scroll-behavior: smooth;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -120,6 +124,9 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     @apply bg-background text-foreground;
   }
@@ -178,6 +185,61 @@
   .dark .custom-scrollbar::-webkit-scrollbar-thumb:active {
     background: oklch(0.7 0 0 / 0.7);
   }
+
+  /* 官网动画 */
+  @keyframes landing-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+  @keyframes landing-glow {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 0.8; }
+  }
+  @keyframes landing-shine {
+    0% { background-position: -200% center; }
+    100% { background-position: 200% center; }
+  }
+  .animate-landing-float {
+    animation: landing-float 4s ease-in-out infinite;
+  }
+  .animate-landing-glow {
+    animation: landing-glow 3s ease-in-out infinite;
+  }
+  .animate-landing-shine {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    background-size: 200% 100%;
+    animation: landing-shine 2s linear infinite;
+  }
+  @keyframes hero-gradient {
+    0%, 100% { background-position: 0% center; }
+    50% { background-position: 100% center; }
+  }
+  .hero-gradient {
+    animation: hero-gradient 4s ease-in-out infinite;
+  }
+  @keyframes prompthub-draw {
+    from { stroke-dashoffset: 1; }
+    to { stroke-dashoffset: 0; }
+  }
+  /* 描边绘制完成后变为实心 */
+  @keyframes prompthub-draw-then-fill {
+    0% { stroke-dashoffset: 1; fill-opacity: 0; }
+    55% { stroke-dashoffset: 0; fill-opacity: 0; }
+    100% { stroke-dashoffset: 0; fill-opacity: 1; }
+  }
+  .prompthub-draw-path {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: prompthub-draw 3s ease-in-out forwards;
+  }
+  /* 每个字母依次绘制，完成后变实心 */
+  .prompthub-letter-draw {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    fill-opacity: 0;
+    animation: prompthub-draw-then-fill 1s ease-in-out forwards;
+  }
+
 }
 
 /* Markdown 渲染样式 */
