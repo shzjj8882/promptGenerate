@@ -1,500 +1,87 @@
-# AILY 项目
+# AILY
 
-AILY 是一个基于 AI 的智能提示词管理系统，支持多场景、多租户的提示词管理和 LLM 对话功能。
+AILY 是一款智能体占位符 SaaS 平台，提供占位符生成、结构化接口和聊天接口，支持多租户、多场景的提示词管理。
 
-## 📋 项目简介
+## 功能特性
 
-AILY 项目采用前后端分离架构，提供：
-- **提示词管理**：支持多场景（调研、PPT报告、销售打单等）的提示词配置和管理
-- **占位符系统**：灵活的占位符配置，支持动态数据注入
-- **RAG 管理**：企业知识库（RAG）配置和管理
-- **RBAC 权限**：基于角色的访问控制，支持菜单权限和接口权限
-- **LLM 对话**：集成 DeepSeek API，支持流式和非流式对话
-- **销售打单**：销售订单分析、DMU 报告生成等功能
+- **占位符系统**：灵活配置占位符，支持动态数据注入
+- **提示词管理**：多场景（调研、PPT、销售等）提示词配置
+- **接口模式**：提供结构化 API 和流式聊天接口
+- **通知中心**：邮件通知（SendCloud）配置，异步任务完成提醒
+- **多维表格**：表格配置与数据管理
+- **模型管理**：LLM 模型配置（支持多模型）
+- **MCP 集成**：Model Context Protocol 配置
+- **RBAC 权限**：角色、权限、菜单管理
+- **多租户**：租户隔离，团队管理
 
-## 🏗️ 项目架构
+## 技术栈
 
-```
-aily_projects/
-├── service/          # 后端服务（FastAPI）
-│   ├── app/         # 应用代码
-│   ├── scripts/     # 数据库迁移和工具脚本
-│   └── main.py      # 应用入口
-├── app/             # 前端应用（Next.js）
-│   ├── app/         # Next.js App Router 页面
-│   ├── components/  # React 组件
-│   ├── lib/         # 工具库和 API 客户端
-│   └── hooks/       # React Hooks
-├── docker/          # Docker 配置文件
-│   ├── docker-compose.yml    # Docker Compose 配置（包含数据库、Redis、后端服务、前端应用）
-│   ├── .env                  # 环境变量配置
-│   ├── .env.example          # 环境变量示例
-│   ├── service/              # 后端服务 Dockerfile
-│   │   └── Dockerfile
-│   ├── app/                  # 前端应用 Dockerfile
-│   │   └── Dockerfile
-│   ├── Makefile              # 便捷命令脚本
-│   └── README.md             # Docker 部署说明
-└── README.md        # 项目说明文档
-```
+| 后端 | 前端 |
+|------|------|
+| FastAPI | Next.js 16 (App Router) |
+| SQLAlchemy + PostgreSQL | TypeScript |
+| Redis | Tailwind CSS + Radix UI |
+| JWT 认证 | MobX |
 
-### 技术栈
-
-**后端**：
-- FastAPI - 异步 Web 框架
-- SQLAlchemy - ORM 框架
-- PostgreSQL - 关系型数据库
-- Redis - 缓存和会话存储
-- asyncpg - 异步 PostgreSQL 驱动
-- python-jose - JWT 认证
-- httpx - HTTP 客户端（LLM API 调用）
-
-**前端**：
-- Next.js 16 - React 框架（App Router）
-- TypeScript - 类型安全
-- Tailwind CSS - 样式框架
-- Radix UI - 无障碍 UI 组件库
-- MobX - 状态管理
-- React Hook Form - 表单管理
-- TanStack Table - 表格组件
-
-## 📁 项目目录结构
-
-### 后端服务 (`service/`)
+## 项目结构
 
 ```
-service/
-├── app/                          # 应用核心代码
-│   ├── core/                    # 核心配置和工具
-│   │   ├── config.py            # 应用配置（环境变量）
-│   │   ├── database.py          # 数据库连接和 Redis 配置
-│   │   ├── auth.py              # 认证依赖（JWT）
-│   │   ├── permissions.py       # 权限检查依赖
-│   │   ├── cache.py             # 缓存工具（Redis）
-│   │   ├── middleware.py        # 中间件（请求ID、审计日志）
-│   │   ├── response.py         # 统一响应格式
-│   │   ├── security.py         # 密码加密、Token 生成
-│   │   ├── seed_scenes.py      # 预置场景初始化
-│   │   └── team_filter.py      # 团队过滤工具
-│   ├── models/                  # 数据模型（SQLAlchemy）
-│   │   ├── user.py             # 用户模型
-│   │   ├── team.py             # 团队模型
-│   │   ├── prompt.py           # 提示词、占位符、租户模型
-│   │   ├── scene.py            # 场景模型
-│   │   ├── rbac.py             # 角色、权限模型
-│   │   └── sales_order.py      # 销售订单模型（DMU报告、客户历史）
-│   ├── schemas/                 # Pydantic 模型（请求/响应）
-│   │   ├── user.py
-│   │   ├── prompt.py
-│   │   ├── rbac.py
-│   │   ├── rag.py
-│   │   ├── sales_order.py
-│   │   └── team.py
-│   ├── services/                 # 业务逻辑层
-│   │   ├── user_service.py     # 用户管理
-│   │   ├── prompt_service.py   # 提示词、占位符、租户服务
-│   │   ├── scene_service.py    # 场景管理
-│   │   ├── rag_service.py      # RAG 管理
-│   │   ├── rbac_service.py     # 角色权限管理
-│   │   ├── team_service.py     # 团队管理
-│   │   ├── sales_order_service.py  # 销售订单服务
-│   │   ├── llm_service.py       # LLM API 调用
-│   │   ├── conversation_context_service.py  # 对话上下文管理
-│   │   ├── placeholder_methods.py  # 占位符数据获取方法
-│   │   └── placeholder_methods_registry.py  # 占位符方法注册
-│   ├── routers/                  # 路由层
-│   │   ├── admin/               # 管理接口（需要认证）
-│   │   │   ├── auth.py         # 认证接口（注册、登录、用户管理）
-│   │   │   ├── prompts.py      # 提示词管理
-│   │   │   ├── scenes.py       # 场景管理
-│   │   │   ├── tenants.py      # 租户管理
-│   │   │   ├── rag.py          # RAG 管理
-│   │   │   ├── rbac.py         # 角色权限管理
-│   │   │   └── teams.py        # 团队管理
-│   │   └── api/                 # 应用接口（可选认证）
-│   │       ├── llmchat.py      # LLM 对话接口
-│   │       └── sales_order.py  # 销售订单接口
-│   └── utils/                    # 工具函数
-│       └── dmu_extractor.py    # DMU 数据提取工具
-├── scripts/                       # 数据库迁移和工具脚本
-│   ├── init_db.py               # 初始化数据库
-│   ├── migrate_*.py             # 数据库迁移脚本
-│   ├── check_*.py               # 数据检查脚本
-│   ├── cleanup_*.py             # 数据清理脚本
-│   ├── delete_*.py              # 数据删除脚本
-│   └── set_superuser.py         # 设置超级管理员
-├── main.py                       # FastAPI 应用入口
-├── requirements.txt              # Python 依赖
-├── env.template                  # 环境变量模板
-├── start.sh                      # 启动脚本
-└── README.md                     # 后端说明文档
+promptGenerate/
+├── service/          # 后端 (FastAPI)
+├── app/              # 前端 (Next.js)
+└── docker/           # Docker 部署
 ```
 
-### 前端应用 (`app/`)
-
-```
-app/
-├── app/                          # Next.js App Router
-│   ├── (auth)/                  # 认证相关页面（登录、注册）
-│   ├── dashboard/               # 管理后台页面
-│   │   ├── prompts/            # 提示词管理
-│   │   ├── scenes/             # 场景管理
-│   │   ├── tenants/           # 租户管理
-│   │   ├── rag/                # RAG 管理
-│   │   ├── rbac/               # 权限管理
-│   │   ├── teams/              # 团队管理
-│   │   ├── layout.tsx          # 布局组件
-│   │   └── page.tsx            # 首页
-│   └── layout.tsx               # 根布局
-├── components/                   # React 组件
-│   ├── ui/                      # 基础 UI 组件（Radix UI 封装）
-│   │   ├── button.tsx
-│   │   ├── dialog.tsx
-│   │   ├── dropdown-menu.tsx
-│   │   ├── select.tsx
-│   │   └── ...
-│   └── shared/                  # 共享业务组件
-│       ├── action-buttons.tsx   # 操作按钮（编辑/删除）
-│       ├── dashboard-nav.tsx    # 导航菜单
-│       ├── page-header.tsx      # 页面头部
-│       ├── theme-toggle.tsx     # 主题切换
-│       └── ...
-├── lib/                          # 工具库
-│   ├── api/                     # API 客户端（客户端调用）
-│   │   ├── config.ts           # API 配置
-│   │   ├── auth.ts             # 认证 API
-│   │   ├── prompts.ts          # 提示词 API
-│   │   └── ...
-│   ├── server-api/              # 服务端 API（SSR 调用）
-│   │   ├── auth.ts
-│   │   ├── prompts.ts
-│   │   └── ...
-│   ├── permissions.ts           # 权限工具
-│   ├── constants.ts             # 常量定义
-│   └── utils/                   # 工具函数
-│       ├── error.ts            # 错误处理
-│       ├── format.ts           # 格式化工具
-│       └── logger.ts           # 日志工具
-├── hooks/                        # React Hooks
-│   ├── use-pagination.ts       # 分页 Hook
-│   ├── use-search.ts           # 搜索 Hook
-│   ├── use-error-handler.ts    # 错误处理 Hook
-│   └── ...
-├── store/                        # 状态管理（MobX）
-│   ├── user-store.ts           # 用户状态
-│   └── ui-store.ts             # UI 状态
-├── tests/                        # 单元测试
-├── public/                       # 静态资源
-├── package.json                  # 依赖配置
-├── tsconfig.json                 # TypeScript 配置
-└── README.md                     # 前端说明文档
-```
-
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 
-- Python 3.9+（MCP 功能需 Python 3.10+）
+- Python 3.10+
 - Node.js 18+
 - PostgreSQL 12+
 - Redis 6+
 
-**MCP 功能（可选）：** 需 Python 3.10+，安装后执行 `pip install -r requirements-mcp.txt`
-
-### 后端启动
+### 后端
 
 ```bash
 cd service
-
-# 1. 创建虚拟环境（如果不存在）
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 2. 安装依赖（MCP 可选：pip install -r requirements-mcp.txt）
 pip install -r requirements.txt
-
-# 3. 配置环境变量
-cp env.template .env
-# 编辑 .env 文件，配置数据库和 Redis 连接信息
-
-# 4. 初始化数据库
+cp env.template .env     # 配置数据库、Redis、API Key
 python3 scripts/init_db.py
-
-# 5. 执行数据库迁移（按需）
-python3 scripts/migrate_tenants.py
-python3 scripts/migrate_rbac.py
-python3 scripts/migrate_scenes.py
-# ... 其他迁移脚本
-
-# 6. 启动服务
 ./start.sh
-# 或手动启动
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-服务启动后访问：
-- API 文档：http://localhost:8000/docs
-- 健康检查：http://localhost:8000/health
-
-### 前端启动
+### 前端
 
 ```bash
 cd app
-
-# 1. 安装依赖
 pnpm install
-
-# 2. 配置环境变量（可选）
-# 创建 .env.local 文件，配置 NEXT_PUBLIC_API_BASE_URL
-# 默认使用 http://localhost:8000
-
-# 3. 启动开发服务器
 pnpm dev
 ```
 
-前端启动后访问：http://localhost:3000
+访问：http://localhost:3000
 
-## 📚 核心功能模块
-
-### 1. 用户认证与权限管理
-
-- **用户管理**：注册、登录、用户信息管理
-- **RBAC 权限**：角色、权限、用户角色分配
-- **团队管理**：多团队支持，团队管理员权限
-- **JWT 认证**：Token 认证，支持刷新
-
-### 2. 提示词管理
-
-- **多场景支持**：调研、PPT报告、销售打单等
-- **占位符系统**：动态占位符配置和数据注入
-- **租户隔离**：每个租户可配置独立的提示词
-- **默认提示词**：支持全局和团队级别的默认提示词
-
-### 3. RAG 管理
-
-- **企业知识库**：RAG 配置和管理
-- **租户关联**：RAG 与租户关联
-- **团队隔离**：团队级别的 RAG 管理
-
-### 4. LLM 对话
-
-- **流式对话**：支持流式响应
-- **占位符处理**：自动处理提示词中的占位符
-- **上下文管理**：对话上下文存储（Redis + 内存降级）
-- **DeepSeek 集成**：集成 DeepSeek API
-
-### 5. 销售打单
-
-- **DMU 分析**：决策单元（DMU）分析
-- **客户历史**：客户历史数据管理
-- **报告生成**：DMU 报告自动生成和保存
-
-## 🗄️ 数据库设计
-
-### 核心表结构
-
-- **users** - 用户表
-- **teams** - 团队表
-- **scenes** - 场景表（场景由管理后台创建）
-- **prompts** - 提示词表
-- **placeholders** - 占位符表
-- **tenants** - 租户表
-- **rags** - RAG 配置表
-- **roles** - 角色表
-- **permissions** - 权限表
-- **user_roles** - 用户角色关联表
-- **role_permissions** - 角色权限关联表
-- **dmu_reports** - DMU 报告表
-- **customer_history** - 客户历史表
-
-### 外键关系
-
-- `users.team_id` → `teams.id`
-- `prompts.scene_id` → `scenes.id`
-- `prompts.team_id` → `teams.id`
-- `placeholders.scene_id` → `scenes.id`
-- `tenants.team_id` → `teams.id`
-- `tenants.created_by` → `users.id`
-- `rags.team_id` → `teams.id`
-- `rags.created_by` → `users.id`
-
-## 🔧 开发指南
-
-### 后端开发
-
-1. **添加新接口**：
-   - 在 `app/routers/admin/` 或 `app/routers/api/` 中添加路由
-   - 在对应的 `services/` 中添加业务逻辑
-   - 在 `schemas/` 中定义请求/响应模型
-
-2. **数据库迁移**：
-   - 在 `scripts/` 目录创建迁移脚本
-   - 使用 `asyncpg` 直接执行 SQL
-   - 参考现有迁移脚本的格式
-
-3. **缓存使用**：
-   - 使用 `app/core/cache.py` 中的缓存工具
-   - 统一管理缓存 key 前缀和 TTL
-   - 确保缓存失效逻辑正确
-
-### 前端开发
-
-1. **添加新页面**：
-   - 在 `app/dashboard/` 下创建页面目录
-   - 使用 `page.tsx` 作为页面入口（SSR）
-   - 使用 `*-client.tsx` 作为客户端组件
-
-2. **API 调用**：
-   - 客户端调用：使用 `lib/api/` 中的 API 客户端
-   - 服务端调用：使用 `lib/server-api/` 中的 API 客户端
-
-3. **组件开发**：
-   - UI 组件放在 `components/ui/`
-   - 业务组件放在 `components/shared/`
-   - 页面特定组件放在对应页面目录下
-
-## 📖 相关文档
-
-项目文档统一在根目录 README.md 中维护，各子目录不再单独维护 README 文件。
-
-## 🔒 安全说明
-
-- **JWT 认证**：所有管理接口需要 Token 认证
-- **密码加密**：使用 bcrypt 加密存储
-- **API Key**：应用接口（`/api`）支持可选的 API Key 认证
-- **CORS 配置**：支持跨域配置
-- **权限控制**：基于角色的细粒度权限控制
-
-## 📝 环境变量配置
-
-### 后端环境变量（`service/.env`）
-
-```bash
-# 应用配置
-DEBUG=False
-ENV=development  # development | production
-SECRET_KEY=your-secret-key-here-change-in-production
-
-# 数据库配置
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=aily_db
-
-# Redis 配置
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
-
-# CORS 配置
-CORS_ORIGINS=http://localhost:3000,http://localhost:3001
-
-# DeepSeek API 配置
-DEEPSEEK_API_KEY=your-api-key
-DEEPSEEK_API_BASE=https://api.deepseek.com/v1
-DEEPSEEK_MODEL=deepseek-chat
-
-# API Key（可选）
-API_KEY=
-```
-
-### 前端环境变量（`app/.env.local`）
-
-```bash
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-```
-
-## 🧪 测试
-
-### 后端测试
-
-```bash
-cd service
-# 运行测试脚本
-python3 scripts/check_*.py
-```
-
-### 前端测试
-
-```bash
-cd app
-# 运行单元测试
-pnpm test
-
-# 运行测试并生成覆盖率报告
-pnpm test:coverage
-```
-
-## 📦 部署
-
-### Docker 部署（推荐）
-
-项目提供了完整的 Docker 配置，包含数据库、Redis、后端服务、前端应用和 Nginx 反向代理：
+### Docker 部署
 
 ```bash
 cd docker
-
-# 1. 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，配置数据库密码、API Key 等
-
-# 2. 构建镜像
-make build
-# 或
-docker-compose build
-
-# 3. 启动所有服务
-make up
-# 或
-docker-compose up -d
-
-# 4. 初始化数据库
+make build && make up
 make init-db
-make migrate SCRIPT=migrate_tenants.py
-make migrate SCRIPT=migrate_rbac.py
-make migrate SCRIPT=migrate_scenes.py
 ```
 
-**访问地址：**
-- 前端应用: http://localhost:3000
-- 后端 API: http://localhost:3000/api（通过 Next.js rewrites 代理）
-- API 文档: http://localhost:3000/docs（通过 Next.js rewrites 代理）
+## 环境变量
 
-详细说明请参考 [docker/README.md](./docker/README.md)
+**后端** `service/.env`：数据库、Redis、`SECRET_KEY`、`DEEPSEEK_API_KEY`、`API_KEY` 等
 
-### 传统部署
+**前端** `app/.env.local`：`NEXT_PUBLIC_API_BASE_URL`（默认 `http://localhost:8000`）
 
-#### 后端部署
+## API 文档
 
-1. 配置生产环境变量
-2. 执行数据库迁移
-3. 使用 `uvicorn` 或 `gunicorn` 启动服务
-4. 配置反向代理（Nginx）
+启动后端后访问：http://localhost:8000/docs
 
-#### 前端部署
+## 许可证
 
-1. 构建生产版本：`pnpm build`
-2. 启动生产服务器：`pnpm start`
-3. 或部署到 Vercel/其他平台
-
-## 🤝 贡献指南
-
-1. Fork 项目
-2. 创建功能分支
-3. 提交更改
-4. 推送到分支
-5. 创建 Pull Request
-
-## 📄 许可证
-
-[添加许可证信息]
-
-## 👥 团队
-
-[添加团队信息]
-
----
-
-**注意**：详细的使用说明请参考各子目录的 README 文件。
+[待添加]
