@@ -12,7 +12,7 @@ const TableDetailClientDynamic = dynamic(() => import("./table-detail-client").t
 });
 
 export const metadata: Metadata = {
-  title: "多维表格详情 - AILY",
+  title: "多维表格详情 - PromptHub",
 };
 
 export default async function TableDetailPage({

@@ -11,7 +11,7 @@ const PlaceholdersConfigClientDynamic = dynamic(() => import("./placeholders-con
 });
 
 export const metadata: Metadata = {
-  title: "占位符编辑设计 - AILY",
+  title: "占位符编辑设计 - PromptHub",
 };
 
 export default function PlaceholdersConfigPage() {

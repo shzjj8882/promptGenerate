@@ -13,7 +13,7 @@ const TablesClient = dynamic(() => import("./tables-client").then((mod) => ({ de
 });
 
 export const metadata: Metadata = {
-  title: "多维表格 - AILY",
+  title: "多维表格 - PromptHub",
 };
 
 export default async function TablesPage() {

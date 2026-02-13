@@ -4,7 +4,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
-  title: "无权限访问 - AILY 控制台",
+  title: "无权限访问 - PromptHub 控制台",
 };
 
 export default function ForbiddenPage() {

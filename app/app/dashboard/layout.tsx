@@ -539,7 +539,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
             <Sparkles className="h-5 w-5 text-zinc-100" />
             {!collapsed && (
               <span className="text-sm font-semibold tracking-tight">
-                AILY 控制台
+                PromptHub 控制台
               </span>
             )}
           </div>
@@ -636,7 +636,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
             <SheetHeader className="flex flex-row items-center gap-2 border-b border-zinc-800 px-4 py-4">
               <Sparkles className="h-5 w-5 text-zinc-100" />
               <SheetTitle className="text-base font-semibold tracking-tight text-zinc-50">
-                AILY 控制台
+                PromptHub 控制台
               </SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto py-4">
@@ -646,7 +646,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
         </Sheet>
 
         {/* Main 内容区域 */}
-        <main className="flex flex-1 flex-col overflow-hidden bg-zinc-100 p-0 sm:p-4 dark:bg-zinc-950">
+        <main className="flex flex-1 flex-col overflow-hidden bg-muted/30 p-4 dark:bg-background">
           <div className="mb-4 hidden sm:block">
             <Breadcrumb>
               <BreadcrumbList>
@@ -671,7 +671,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
             </Breadcrumb>
           </div>
           <div className={cn(
-            "flex flex-1 flex-col rounded-lg bg-white p-6 shadow-md w-full",
+            "flex flex-1 flex-col rounded-lg bg-card border border-border p-6 shadow-md w-full",
             // 表格详情页面不使用外层滚动，让表格内容自己滚动
             pathname && /^\/dashboard\/tables\/[^/]+/.test(pathname) 
               ? "overflow-hidden" 

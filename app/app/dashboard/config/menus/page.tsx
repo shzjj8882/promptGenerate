@@ -14,7 +14,7 @@ const MenusConfigClientDynamic = dynamic(() => import("./menus-config-client").t
 });
 
 export const metadata: Metadata = {
-  title: "菜单配置 - AILY",
+  title: "菜单配置 - PromptHub",
 };
 
 export default async function MenusConfigPage() {

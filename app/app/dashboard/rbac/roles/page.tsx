@@ -16,7 +16,7 @@ const RolesClient = dynamic(() => import("./roles-client").then((mod) => ({ defa
 });
 
 export const metadata: Metadata = {
-  title: "角色管理 - AILY",
+  title: "角色管理 - PromptHub",
 };
 
 export default async function RolesPage() {

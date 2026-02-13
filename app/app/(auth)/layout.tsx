@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { LANDING_BRAND } from "@/lib/landing-config";
+import { ThemeToggle } from "@/components/shared/theme-toggle";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -33,7 +34,10 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       </div>
 
       {/* 右侧表单区域 */}
-      <div className="flex w-full flex-col items-center justify-center bg-zinc-50 p-6 dark:bg-black lg:w-1/2">
+      <div className="relative flex w-full flex-col items-center justify-center overflow-y-auto bg-background p-4 sm:p-6 lg:w-1/2">
+        <div className="absolute right-4 top-4">
+          <ThemeToggle />
+        </div>
         {children}
       </div>
     </div>

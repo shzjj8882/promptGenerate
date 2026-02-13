@@ -7,7 +7,7 @@ import { DEFAULT_PAGE_SIZE } from "@/lib/constants";
 import { isServerApiError } from "@/lib/server-api/errors";
 
 export const metadata: Metadata = {
-  title: "团队管理 - AILY",
+  title: "团队管理 - PromptHub",
 };
 
 export default async function TeamsPage() {

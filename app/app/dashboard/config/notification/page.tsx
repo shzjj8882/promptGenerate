@@ -13,7 +13,7 @@ const NotificationConfigClientDynamic = dynamic(
 );
 
 export const metadata: Metadata = {
-  title: "通知中心 - AILY",
+  title: "通知中心 - PromptHub",
 };
 
 export default function NotificationConfigPage() {

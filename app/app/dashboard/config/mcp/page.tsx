@@ -13,7 +13,7 @@ const MCPConfigClientDynamic = dynamic(
 );
 
 export const metadata: Metadata = {
-  title: "MCP 配置 - AILY",
+  title: "MCP 配置 - PromptHub",
 };
 
 export default function MCPConfigPage() {

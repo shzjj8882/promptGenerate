@@ -4,7 +4,7 @@ import { getTenantsOnServer } from "@/lib/server-api/tenants";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "租户管理 - AILY",
+  title: "租户管理 - PromptHub",
 };
 
 export default async function TenantsPage() {

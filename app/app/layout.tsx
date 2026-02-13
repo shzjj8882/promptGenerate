@@ -22,7 +22,7 @@ const pacifico = Pacifico({
 });
 
 export const metadata: Metadata = {
-  title: "AILY 控制台",
+  title: "PromptHub 控制台",
   description: "智能化的多租户管理系统",
 };
 
@@ -36,7 +36,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${pacifico.variable} antialiased`}
       >
-        <ThemeProvider defaultTheme="system" storageKey="aily-theme">
+        <ThemeProvider defaultTheme="system" storageKey="prompthub-theme">
           {children}
           <Toaster />
           <UnauthorizedDialog />

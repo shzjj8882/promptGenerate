@@ -11,7 +11,7 @@ const ScenesConfigClientDynamic = dynamic(() => import("./scenes-config-client")
 });
 
 export const metadata: Metadata = {
-  title: "场景值配置 - AILY",
+  title: "场景值配置 - PromptHub",
 };
 
 export default function ScenesConfigPage() {

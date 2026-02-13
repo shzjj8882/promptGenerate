@@ -10,7 +10,7 @@ const ModelsConfigClientDynamic = dynamic(() => import("./models-config-client")
 });
 
 export const metadata: Metadata = {
-  title: "模型管理 - AILY",
+  title: "模型管理 - PromptHub",
 };
 
 export default function ModelsConfigPage() {

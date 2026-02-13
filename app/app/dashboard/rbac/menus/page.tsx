@@ -13,7 +13,7 @@ const MenusClient = dynamic(() => import("./menus-client").then((mod) => ({ defa
 });
 
 export const metadata: Metadata = {
-  title: "菜单管理 - AILY",
+  title: "菜单管理 - PromptHub",
 };
 
 export default async function MenusPage() {

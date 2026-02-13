@@ -17,7 +17,7 @@ const UserRolesClient = dynamic(() => import("./user-roles-client").then((mod) =
 });
 
 export const metadata: Metadata = {
-  title: "用户权限分配 - AILY",
+  title: "用户权限分配 - PromptHub",
 };
 
 const ALL_ROLES_LIMIT = 1000;

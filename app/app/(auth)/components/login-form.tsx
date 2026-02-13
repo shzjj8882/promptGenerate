@@ -6,7 +6,7 @@ import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -75,19 +75,16 @@ export function LoginForm() {
   };
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
+    <Card className="w-full max-w-sm min-w-0">
+      <CardHeader className="pb-8">
         <CardTitle className="text-center text-2xl font-semibold">
-          登录 PromptHub 控制台
+          登录
         </CardTitle>
-        <CardDescription className="text-center">
-          请输入您的用户名和密码
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="username">用户名</Label>
+            <Label htmlFor="username">用户名<span className="text-destructive">*</span></Label>
             <Input
               id="username"
               type="text"
@@ -100,7 +97,7 @@ export function LoginForm() {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password">密码</Label>
+            <Label htmlFor="password">密码<span className="text-destructive">*</span></Label>
             <PasswordInput
               id="password"
               placeholder="请输入密码"
@@ -118,7 +115,7 @@ export function LoginForm() {
               {error}
             </div>
           )}
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
+          <Button type="submit" className="mt-6 w-full" disabled={isSubmitting}>
             {isSubmitting ? "登录中..." : "登录"}
           </Button>
         </form>

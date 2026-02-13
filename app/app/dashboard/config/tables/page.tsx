@@ -11,7 +11,7 @@ const TablesConfigClientDynamic = dynamic(() => import("./tables-config-client")
 });
 
 export const metadata: Metadata = {
-  title: "多维表格配置 - AILY",
+  title: "多维表格配置 - PromptHub",
 };
 
 export default function TablesConfigPage() {

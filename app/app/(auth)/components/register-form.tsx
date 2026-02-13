@@ -6,11 +6,17 @@ import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { HelpCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { register as registerApi } from "@/lib/api/auth";
 
 const registerSchema = yup.object({
@@ -78,16 +84,16 @@ export function RegisterForm() {
   };
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
+    <Card className="w-full max-w-sm min-w-0">
+      <CardHeader className="pb-8">
         <CardTitle className="text-center text-2xl font-semibold">
-          注册 PromptHub 控制台
+          注册
         </CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="username">用户名</Label>
+            <Label htmlFor="username">用户名<span className="text-destructive">*</span></Label>
             <Input
               id="username"
               type="text"
@@ -100,7 +106,7 @@ export function RegisterForm() {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="email">邮箱</Label>
+            <Label htmlFor="email">邮箱<span className="text-destructive">*</span></Label>
             <Input
               id="email"
               type="email"
@@ -113,7 +119,7 @@ export function RegisterForm() {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="fullName">全名（可选）</Label>
+            <Label htmlFor="fullName">全名</Label>
             <Input
               id="fullName"
               type="text"
@@ -126,9 +132,22 @@ export function RegisterForm() {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="teamCode">
-              团队代码 <span className="text-destructive">*</span>
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="teamCode">团队代码<span className="text-destructive">*</span></Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex size-4 shrink-0 rounded-full text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <HelpCircle className="size-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-3 text-sm" align="end">
+                  请联系超级管理员获取团队代码
+                </PopoverContent>
+              </Popover>
+            </div>
             <Input
               id="teamCode"
               type="text"
@@ -139,12 +158,9 @@ export function RegisterForm() {
             {errors.teamCode && (
               <p className="text-sm text-destructive">{errors.teamCode.message}</p>
             )}
-            <p className="text-xs text-muted-foreground">
-              请联系超级管理员获取团队代码
-            </p>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password">密码</Label>
+            <Label htmlFor="password">密码<span className="text-destructive">*</span></Label>
             <PasswordInput
               id="password"
               placeholder="请输入密码"
@@ -158,7 +174,7 @@ export function RegisterForm() {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="confirmPassword">确认密码</Label>
+            <Label htmlFor="confirmPassword">确认密码<span className="text-destructive">*</span></Label>
             <PasswordInput
               id="confirmPassword"
               placeholder="请再次输入密码"
@@ -176,7 +192,7 @@ export function RegisterForm() {
               {error}
             </div>
           )}
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
+          <Button type="submit" className="mt-6 w-full" disabled={isSubmitting}>
             {isSubmitting ? "注册中..." : "注册"}
           </Button>
         </form>
