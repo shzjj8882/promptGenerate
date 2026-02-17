@@ -9,6 +9,7 @@ from app.models.conversation import Conversation, ConversationMessage
 from app.models.mcp import MCPConfig
 from app.models.notification_config import NotificationConfig
 from app.models.llmchat_task import LLMChatTask
+from app.models.user_dashboard_config import UserDashboardConfig
 
 __all__ = [
     "Prompt", "Tenant", "Placeholder", "PlaceholderDataSource", 
@@ -18,4 +19,5 @@ __all__ = [
     "LLMModel", "Conversation", "ConversationMessage", "MCPConfig",
     "NotificationConfig",
     "LLMChatTask",
+    "UserDashboardConfig",
 ]

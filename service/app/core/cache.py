@@ -21,6 +21,7 @@ CACHE_KEY_PREFIXES = {
     "user_perm": "user_perm_codes:v1:",  # 用户权限代码缓存
     "menu_tree": "menu_tree:v1:",  # 菜单树缓存
     "team_users": "team_users:v1:",  # 团队用户ID列表缓存
+    "dashboard_config": "dashboard_config:v1:",  # 工作台布局配置缓存
 }
 
 # 缓存 TTL（秒）
@@ -34,6 +35,7 @@ CACHE_TTL = {
     "user_perm": 300,  # 5 分钟
     "menu_tree": 1800,  # 30 分钟（变更频率低）
     "team_users": 300,  # 5 分钟
+    "dashboard_config": 3600,  # 1 小时（工作台配置变更频率低）
 }
 
 

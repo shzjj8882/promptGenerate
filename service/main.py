@@ -167,70 +167,32 @@ async def startup_event():
     from app.services import placeholder_methods_registry
     placeholder_methods_registry.register_placeholder_methods()
 
-    # 在服务启动时自动执行与 RBAC / 菜单 相关的迁移脚本（幂等，可重复执行）
-    # 这样就不需要手动到 scripts/ 目录逐个运行，确保团队管理员创建后能立即获得完整菜单
-    try:
-        from scripts import (
-            migrate_rbac,
-            migrate_permission_menu_type,
-            migrate_permission_config_fields,
-            migrate_add_config_menu,
-            migrate_add_models_menu,
-            migrate_add_tables_menu,
-            migrate_add_tables_menu_button_permissions,
-            migrate_add_team_menu,
-            migrate_add_rbac_submenus,
-            migrate_api_permissions,
-            migrate_add_tables_api_permissions,
-            migrate_add_reset_authcode_permission,
-            migrate_remove_team_auth_menu,
-            migrate_add_mcp_menu,
-            migrate_add_mcp_api_permissions,
-            migrate_add_mcp_transport_type,
-            migrate_add_notification_configs,
-            migrate_add_llmchat_tasks,
-            migrate_add_notification_menu,
-            migrate_add_notification_api_permissions,
-            migrate_add_notification_menu_config,
-        )
+    # RBAC/菜单 迁移：版本一致则跳过，不一致则执行并记录版本
+    from app.core.migration_config import MIGRATIONS
+    from app.core.migration_version import needs_migration, write_applied_version
 
-        # 这些脚本内部都使用 asyncpg 并带有「IF NOT EXISTS / 已存在则跳过」等幂等逻辑
-        await migrate_rbac.migrate()
-        await migrate_permission_menu_type.migrate()
-        await migrate_permission_config_fields.migrate()
-        await migrate_add_config_menu.migrate()
-        await migrate_add_models_menu.migrate()
-        await migrate_add_tables_menu.migrate()
-        await migrate_add_tables_menu_button_permissions.migrate()
-        await migrate_add_team_menu.migrate()
-        await migrate_add_rbac_submenus.migrate()
-        await migrate_api_permissions.migrate()
-        await migrate_add_tables_api_permissions.migrate()
-        await migrate_add_reset_authcode_permission.migrate()
-        await migrate_remove_team_auth_menu.migrate()
-        await migrate_add_mcp_menu.migrate()
-        await migrate_add_mcp_api_permissions.migrate()
-        await migrate_add_mcp_transport_type.migrate()
-        await migrate_add_notification_configs.migrate()
-        await migrate_add_llmchat_tasks.migrate()
-        await migrate_add_notification_menu.migrate()
-        await migrate_add_notification_api_permissions.migrate()
-        await migrate_add_notification_menu_config.migrate()
-        logger.info("RBAC / 菜单相关迁移脚本已在启动时自动执行完成")
-        # 迁移完成后清除菜单树和用户权限缓存，避免用户仍拿到迁移前的旧缓存（空菜单、缺接口权限）
+    migration_need, migration_cur, _ = needs_migration()
+    if migration_need:
         try:
-            from app.core.cache import CACHE_KEY_PREFIXES, delete_cache_pattern
-            from app.core.database import get_redis_optional
-            redis_client = await get_redis_optional()
-            if redis_client:
-                await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['menu_tree']}*")
-                await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['user_perm']}*")
-                logger.info("菜单树与用户权限缓存已清除")
-        except Exception as cache_err:
-            logger.warning(f"清除菜单树缓存失败（可忽略）: {cache_err}")
-    except Exception as e:
-        # 启动时不因为迁移失败直接让服务挂掉，方便在日志中排查
-        logger.exception(f"启动时执行 RBAC / 菜单迁移脚本失败: {e}")
+            for mod_name, fn_name in MIGRATIONS:
+                mod = __import__(f"scripts.{mod_name}", fromlist=[fn_name])
+                fn = getattr(mod, fn_name)
+                await fn()
+            write_applied_version(migration_cur)
+            logger.info("RBAC / 菜单迁移已执行完成，版本: %s", migration_cur)
+            # 迁移完成后清除菜单树和用户权限缓存
+            try:
+                from app.core.cache import CACHE_KEY_PREFIXES, delete_cache_pattern
+                from app.core.database import get_redis_optional
+                redis_client = await get_redis_optional()
+                if redis_client:
+                    await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['menu_tree']}*")
+                    await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['user_perm']}*")
+                    logger.info("菜单树与用户权限缓存已清除")
+            except Exception as cache_err:
+                logger.warning(f"清除菜单树缓存失败（可忽略）: {cache_err}")
+        except Exception as e:
+            logger.exception(f"启动时执行 RBAC / 菜单迁移脚本失败: {e}")
 
     # 初始化默认系统管理员账号（如不存在）
     await initialize_default_admin()

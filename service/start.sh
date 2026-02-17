@@ -25,22 +25,36 @@ if [ "$("$PYTHON_CMD" -c "import sys; print(sys.version_info.major*100+sys.versi
 fi
 
 # 检查虚拟环境
+VENV_JUST_CREATED=0
 if [ ! -d "venv" ]; then
     echo "创建虚拟环境（使用 $PYTHON_CMD）..."
     $PYTHON_CMD -m venv venv
+    VENV_JUST_CREATED=1
 fi
 
 # 使用 venv 中的 Python（兼容 uv 创建的 venv，可能无 pip 可执行文件）
 VENV_PYTHON="venv/bin/python"
 VENV_PIP="$VENV_PYTHON -m pip"
 
-# 安装依赖
-echo "安装依赖..."
-$VENV_PIP install -r requirements.txt
-# Python 3.10+ 时自动安装 MCP
-venv_ver=$($VENV_PYTHON -c "import sys; print(sys.version_info.major*100+sys.version_info.minor)" 2>/dev/null)
-if [ -n "$venv_ver" ] && [ "$venv_ver" -ge 310 ]; then
-    $VENV_PIP install -r requirements-mcp.txt
+# 安装依赖：新建 venv 必须安装；否则由环境变量控制
+# AUTO_INSTALL=1 安装 | 未设置或 SKIP_INSTALL=1 跳过
+do_install=0
+if [ "$VENV_JUST_CREATED" = "1" ]; then
+    do_install=1
+    echo "安装依赖（新建虚拟环境）..."
+elif [ "$AUTO_INSTALL" = "1" ]; then
+    do_install=1
+    echo "安装依赖（AUTO_INSTALL=1）..."
+else
+    echo "跳过依赖安装（需安装时设置 AUTO_INSTALL=1）"
+fi
+
+if [ "$do_install" = "1" ]; then
+    $VENV_PIP install -r requirements.txt
+    venv_ver=$($VENV_PYTHON -c "import sys; print(sys.version_info.major*100+sys.version_info.minor)" 2>/dev/null)
+    if [ -n "$venv_ver" ] && [ "$venv_ver" -ge 310 ]; then
+        $VENV_PIP install -r requirements-mcp.txt
+    fi
 fi
 
 # 检查 .env 文件
@@ -54,6 +68,10 @@ fi
 # 初始化数据库（创建数据库）
 echo "初始化数据库..."
 $VENV_PYTHON scripts/init_db.py
+
+# 数据库 schema 版本检查：有变更时提示确认后再启动
+echo "检查数据库版本..."
+PYTHONPATH=. $VENV_PYTHON scripts/check_db_version.py || exit 1
 
 # 预检查：验证 RBAC/菜单 迁移脚本能否全部成功（避免启动时报错）
 echo "预检查迁移脚本..."

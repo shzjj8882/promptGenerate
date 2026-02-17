@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -37,6 +38,9 @@ import {
   LogOut,
   Shield,
   Menu,
+  ChevronLeft,
+  Settings2,
+  Check,
 } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { uiStore } from "@/store/ui-store";
@@ -46,6 +50,7 @@ import { getAuthToken } from "@/lib/api/config";
 import { logger } from "@/lib/utils/logger";
 import { getMenuTree, MenuItem } from "@/lib/api/rbac";
 import { getMenuHref, MENU_CODE_TO_HREF } from "@/lib/menu-config";
+import { DashboardConfigPanel } from "./components/dashboard-config-panel/DashboardConfigPanel";
 
 /** 路径 -> 所需菜单权限 code（或 "superuser" 表示仅超管可访问，"team_admin" 表示团队管理员或超管可访问），用于路由守卫 */
 const PATH_TO_MENU_CODE: Record<string, string> = {
@@ -247,8 +252,8 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
   // 首页
   if (pathname === "/dashboard") {
     return {
-      title: "控制台",
-      crumbs: [{ label: "控制台" }],
+      title: "工作台",
+      crumbs: [{ label: "工作台" }],
     };
   }
   
@@ -257,7 +262,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
     return {
       title: "团队管理",
       crumbs: [
-        { label: "控制台", href: "/dashboard" },
+        { label: "工作台", href: "/dashboard" },
         { label: "团队管理" },
       ],
     };
@@ -283,7 +288,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
           const menuPath = buildMenuPath(menuTree, menuCode);
           if (menuPath.length > 0) {
             const crumbs: Array<{ label: string; href?: string }> = [
-              { label: "控制台", href: "/dashboard" },
+              { label: "工作台", href: "/dashboard" },
             ];
             menuPath.forEach((item, index) => {
               const href = getMenuHref(item.code);
@@ -303,7 +308,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
         return {
           title: info.name,
           crumbs: [
-            { label: "控制台", href: "/dashboard" },
+            { label: "工作台", href: "/dashboard" },
             { label: "配置中心", href: "/dashboard/config/scenes" },
             { label: info.name },
           ],
@@ -315,7 +320,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
     return {
       title: "配置中心",
       crumbs: [
-        { label: "控制台", href: "/dashboard" },
+        { label: "工作台", href: "/dashboard" },
         { label: "配置中心" },
       ],
     };
@@ -330,7 +335,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
       return {
         title: "详情",
         crumbs: [
-          { label: "控制台", href: "/dashboard" },
+          { label: "工作台", href: "/dashboard" },
           { label: menuItem.name, href: "/dashboard/tables" },
           { label: "详情" },
         ],
@@ -340,7 +345,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
     return {
       title: "详情",
       crumbs: [
-        { label: "控制台", href: "/dashboard" },
+        { label: "工作台", href: "/dashboard" },
         { label: "多维表格", href: "/dashboard/tables" },
         { label: "详情" },
       ],
@@ -354,7 +359,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
       const menuPath = buildMenuPath(menuTree, menuCode);
       if (menuPath.length > 0) {
         const crumbs: Array<{ label: string; href?: string }> = [
-          { label: "控制台", href: "/dashboard" },
+          { label: "工作台", href: "/dashboard" },
         ];
         
         // 添加菜单路径中的每一项
@@ -394,7 +399,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
       return {
         title: menuName,
         crumbs: [
-          { label: "控制台", href: "/dashboard" },
+          { label: "工作台", href: "/dashboard" },
           { label: menuName },
         ],
       };
@@ -403,8 +408,8 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
   
   // 默认返回
   return {
-    title: "控制台",
-    crumbs: [{ label: "控制台", href: "/dashboard" }],
+    title: "工作台",
+    crumbs: [{ label: "工作台", href: "/dashboard" }],
   };
 }
 
@@ -435,6 +440,13 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
   // 移动端：路由切换时关闭菜单
   useEffect(() => {
     setMobileMenuOpen(false);
+  }, [pathname]);
+
+  // 离开 /dashboard 时退出配置模式
+  useEffect(() => {
+    if (pathname !== "/dashboard") {
+      uiStore.exitDashboardConfig();
+    }
   }, [pathname]);
 
   // 页面加载/刷新时：并行请求用户信息和菜单树（优化首次加载速度）
@@ -539,7 +551,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
             <Sparkles className="h-5 w-5 text-zinc-100" />
             {!collapsed && (
               <span className="text-sm font-semibold tracking-tight">
-                PromptHub 控制台
+                PromptHub 工作台
               </span>
             )}
           </div>
@@ -549,10 +561,12 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
         <DashboardNav />
       </aside>
 
-      {/* 右侧内容区域 */}
-      <div className="flex flex-1 flex-col h-screen overflow-hidden">
-        {/* Header */}
-        <header className="flex h-16 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
+      {/* 右侧内容区域 + 配置侧边栏（整体屏幕） */}
+      <div className="flex flex-1 min-w-0 h-screen overflow-hidden">
+        {/* 主内容区：工作台首页特殊处理（内容直接在最外层），其他页面用 header + main */}
+        <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
+        {/* Header（工作台首页也保留，保持一致性） */}
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
           <div className="flex items-center gap-3">
             {/* 移动端：汉堡菜单 */}
             <button
@@ -580,6 +594,26 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
             <h1 className="text-base font-semibold truncate sm:text-lg">{meta.title}</h1>
           </div>
           <div className="flex items-center gap-4">
+            {pathname === "/dashboard" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => uiStore.toggleDashboardConfig()}
+                className={cn("gap-2", uiStore.dashboardConfigMode && "bg-muted")}
+              >
+                {uiStore.dashboardConfigMode ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    完成
+                  </>
+                ) : (
+                  <>
+                    <Settings2 className="h-4 w-4" />
+                    配置
+                  </>
+                )}
+              </Button>
+            )}
             <ThemeToggle />
             {mounted && (
               <DropdownMenu>
@@ -636,7 +670,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
             <SheetHeader className="flex flex-row items-center gap-2 border-b border-zinc-800 px-4 py-4">
               <Sparkles className="h-5 w-5 text-zinc-100" />
               <SheetTitle className="text-base font-semibold tracking-tight text-zinc-50">
-                PromptHub 控制台
+                PromptHub 工作台
               </SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto py-4">
@@ -645,38 +679,9 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
           </SheetContent>
         </Sheet>
 
-        {/* Main 内容区域 */}
-        <main className="flex flex-1 flex-col overflow-hidden bg-muted/30 p-4 dark:bg-background">
-          <div className="mb-4 hidden sm:block">
-            <Breadcrumb>
-              <BreadcrumbList>
-                {meta.crumbs.map((c, idx) => {
-                  const isLast = idx === meta.crumbs.length - 1;
-                  return (
-                    <React.Fragment key={idx}>
-                      <BreadcrumbItem>
-                        {isLast || !c.href ? (
-                          <BreadcrumbPage>{c.label}</BreadcrumbPage>
-                        ) : (
-                          <BreadcrumbLink asChild>
-                            <Link href={c.href}>{c.label}</Link>
-                          </BreadcrumbLink>
-                        )}
-                      </BreadcrumbItem>
-                      {!isLast && <BreadcrumbSeparator />}
-                    </React.Fragment>
-                  );
-                })}
-              </BreadcrumbList>
-            </Breadcrumb>
-          </div>
-          <div className={cn(
-            "flex flex-1 flex-col rounded-lg bg-card border border-border p-6 shadow-md w-full",
-            // 表格详情页面不使用外层滚动，让表格内容自己滚动
-            pathname && /^\/dashboard\/tables\/[^/]+/.test(pathname) 
-              ? "overflow-hidden" 
-              : "overflow-auto custom-scrollbar"
-          )}>
+        {/* 工作台首页：内容直接在最外层，背景和边距与 main 一致 */}
+        {pathname === "/dashboard" ? (
+          <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-muted/30 p-4 dark:bg-background">
             {requiredMenuCode != null && !canAccessCurrentRoute ? (
               <div className="flex flex-1 items-center justify-center text-muted-foreground">
                 {token && userStore.user === null ? "加载中..." : "正在跳转..."}
@@ -685,7 +690,68 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
               children
             )}
           </div>
-        </main>
+        ) : (
+          /* 其他页面：main + 面包屑 + card 包裹 */
+          <main className="flex flex-1 flex-col overflow-hidden bg-muted/30 p-4 dark:bg-background">
+            <div className="mb-4 hidden sm:block">
+              <Breadcrumb>
+                <BreadcrumbList>
+                  {meta.crumbs.map((c, idx) => {
+                    const isLast = idx === meta.crumbs.length - 1;
+                    return (
+                      <React.Fragment key={idx}>
+                        <BreadcrumbItem>
+                          {isLast || !c.href ? (
+                            <BreadcrumbPage>{c.label}</BreadcrumbPage>
+                          ) : (
+                            <BreadcrumbLink asChild>
+                              <Link href={c.href}>{c.label}</Link>
+                            </BreadcrumbLink>
+                          )}
+                        </BreadcrumbItem>
+                        {!isLast && <BreadcrumbSeparator />}
+                      </React.Fragment>
+                    );
+                  })}
+                </BreadcrumbList>
+              </Breadcrumb>
+            </div>
+            <div className={cn(
+              "flex flex-1 flex-col rounded-lg bg-card border border-border p-6 shadow-md w-full",
+              pathname && /^\/dashboard\/tables\/[^/]+/.test(pathname)
+                ? "overflow-hidden"
+                : "overflow-auto custom-scrollbar"
+            )}>
+              {requiredMenuCode != null && !canAccessCurrentRoute ? (
+                <div className="flex flex-1 items-center justify-center text-muted-foreground">
+                  {token && userStore.user === null ? "加载中..." : "正在跳转..."}
+                </div>
+              ) : (
+                children
+              )}
+            </div>
+          </main>
+        )}
+        </div>
+
+        {/* 配置侧边栏（仅 /dashboard 首页配置中且侧边栏展开时） */}
+        {pathname === "/dashboard" && uiStore.dashboardConfigMode && uiStore.dashboardConfigSidebarOpen && (
+          <DashboardConfigPanel
+            onCollapse={() => uiStore.setDashboardConfigSidebarOpen(false)}
+          />
+        )}
+        {/* 配置中但侧边栏折叠时：显示展开按钮条 */}
+        {pathname === "/dashboard" && uiStore.dashboardConfigMode && !uiStore.dashboardConfigSidebarOpen && (
+          <button
+            type="button"
+            onClick={() => uiStore.setDashboardConfigSidebarOpen(true)}
+            className="w-10 shrink-0 h-full flex flex-col items-center justify-center gap-0.5 border-l border-zinc-700 bg-zinc-900 hover:bg-zinc-800 transition-colors shadow-[-4px_0_8px_rgba(0,0,0,0.2)]"
+            title="展开侧边栏"
+          >
+            <ChevronLeft className="h-4 w-4 text-zinc-300" />
+            <span className="text-[10px] text-zinc-300">展开</span>
+          </button>
+        )}
       </div>
     </div>
   );

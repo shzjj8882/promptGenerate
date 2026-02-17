@@ -40,9 +40,13 @@ redis_client: Optional[redis.Redis] = None
 async def init_db():
     """初始化数据库连接"""
     global redis_pool, redis_client
-    
+
     # 导入所有模型以确保表被创建
-    from app.models import Prompt, Tenant, Placeholder, User, PlaceholderDataSource, Scene, MultiDimensionTable, MultiDimensionTableRow, MultiDimensionTableCell
+    from app.models import (
+        Prompt, Tenant, Placeholder, User, PlaceholderDataSource,
+        Scene, MultiDimensionTable, MultiDimensionTableRow, MultiDimensionTableCell,
+        UserDashboardConfig,
+    )
     from app.models.sales_order import DMUReport, CustomerHistory
     from app.models.rbac import Role, Permission
     from app.models.llm_model import LLMModel
@@ -50,7 +54,7 @@ async def init_db():
     from app.models.mcp import MCPConfig
     from app.models.notification_config import NotificationConfig
     from app.models.llmchat_task import LLMChatTask
-    
+
     # 初始化 Redis
     redis_pool = redis.ConnectionPool(
         host=settings.REDIS_HOST,
@@ -60,17 +64,25 @@ async def init_db():
         decode_responses=True,
     )
     redis_client = redis.Redis(connection_pool=redis_pool)
-    
+
     # 测试 Redis 连接
     try:
         await redis_client.ping()
         print("Redis connection established")
     except Exception as e:
         print(f"Redis connection failed: {e}")
-    
-    # 创建数据库表
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+
+    # 数据库 schema 版本检查：一致则跳过建表，不一致则执行并记录版本
+    from app.core.schema_version import needs_migration, write_applied_version
+
+    need, current, applied = needs_migration()
+    if need:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        write_applied_version(current)
+        print(f"Database schema updated, version: {current}")
+    else:
+        print(f"Database schema up to date, version: {current}")
 
 
 async def get_db() -> AsyncSession:

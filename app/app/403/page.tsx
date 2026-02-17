@@ -4,7 +4,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
-  title: "无权限访问 - PromptHub 控制台",
+  title: "无权限访问 - PromptHub 工作台",
 };
 
 export default function ForbiddenPage() {
@@ -40,7 +40,7 @@ export default function ForbiddenPage() {
 
             <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center lg:justify-start">
               <Button asChild size="lg" className="sm:min-w-[170px]">
-                <Link href="/dashboard">返回控制台</Link>
+                <Link href="/dashboard">返回工作台</Link>
               </Button>
               <Button asChild variant="outline" size="lg" className="sm:min-w-[170px] bg-white/40 dark:bg-zinc-950/20">
                 <Link href="/login">重新登录</Link>

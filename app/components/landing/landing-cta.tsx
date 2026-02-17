@@ -16,7 +16,7 @@ export function LandingCta() {
           </p>
           <div className="mt-8">
             <Button size="lg" asChild className="h-12 px-10">
-              <Link href="/login">进入控制台</Link>
+              <Link href="/login">进入工作台</Link>
             </Button>
           </div>
         </LandingAnimateIn>

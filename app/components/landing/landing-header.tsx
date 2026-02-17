@@ -95,7 +95,7 @@ export function LandingHeader() {
             </SheetContent>
           </Sheet>
           <Button size="sm" asChild className="h-9">
-            <Link href="/login">进入控制台</Link>
+            <Link href="/login">进入工作台</Link>
           </Button>
         </div>
       </div>

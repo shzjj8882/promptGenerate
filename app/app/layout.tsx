@@ -22,7 +22,7 @@ const pacifico = Pacifico({
 });
 
 export const metadata: Metadata = {
-  title: "PromptHub 控制台",
+  title: "PromptHub 工作台",
   description: "智能化的多租户管理系统",
 };
 

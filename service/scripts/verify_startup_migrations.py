@@ -13,26 +13,17 @@ sys.path.insert(0, str(project_root))
 
 
 async def main():
+    from app.core.migration_config import MIGRATIONS
+    from app.core.migration_version import needs_migration, write_applied_version
+
+    # 版本一致则跳过，main 启动时也不会执行
+    need, cur, _ = needs_migration()
+    if not need:
+        print("迁移版本已是最新，跳过预检查")
+        return
+
     errors = []
-    scripts = [
-        ("migrate_rbac", "migrate"),
-        ("migrate_permission_menu_type", "migrate"),
-        ("migrate_permission_config_fields", "migrate"),
-        ("migrate_add_config_menu", "migrate"),
-        ("migrate_add_models_menu", "migrate"),
-        ("migrate_add_tables_menu", "migrate"),
-        ("migrate_add_tables_menu_button_permissions", "migrate"),
-        ("migrate_add_team_menu", "migrate"),
-        ("migrate_add_rbac_submenus", "migrate"),
-        ("migrate_api_permissions", "migrate"),
-        ("migrate_add_tables_api_permissions", "migrate"),
-        ("migrate_add_reset_authcode_permission", "migrate"),
-        ("migrate_remove_team_auth_menu", "migrate"),
-        ("migrate_add_mcp_menu", "migrate"),
-        ("migrate_add_mcp_api_permissions", "migrate"),
-        ("migrate_add_mcp_transport_type", "migrate"),
-    ]
-    for mod_name, fn_name in scripts:
+    for mod_name, fn_name in MIGRATIONS:
         try:
             mod = __import__(f"scripts.{mod_name}", fromlist=[fn_name])
             fn = getattr(mod, fn_name)
@@ -44,6 +35,7 @@ async def main():
     if errors:
         print(f"\n共 {len(errors)} 个脚本失败")
         sys.exit(1)
+    write_applied_version(cur)
     print("\n✅ 所有启动迁移脚本验证通过")
 
 

@@ -43,6 +43,8 @@ ENV/
 # 数据库
 *.db
 *.sqlite
+.db_version
+.db_migration_version
 
 # 测试
 .pytest_cache/

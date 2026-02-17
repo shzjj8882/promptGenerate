@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NODE_OPTIONS='--max-old-space-size=4096' next dev",
+    "dev": "NODE_OPTIONS='--max-old-space-size=4096' next dev --webpack",
+    "dev:turbo": "NODE_OPTIONS='--max-old-space-size=4096' next dev",
     "build": "NODE_OPTIONS='--max-old-space-size=4096' next build",
     "start": "next start",
     "lint": "eslint",
@@ -43,6 +44,7 @@
     "next-themes": "^0.4.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-grid-layout": "^2.2.2",
     "react-hook-form": "^7.71.1",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",

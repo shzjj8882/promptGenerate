@@ -21,7 +21,7 @@ export function LandingHero() {
         </p>
         <div className="mt-10">
           <Button size="lg" asChild className="h-11 px-8">
-            <Link href="/login">进入控制台</Link>
+            <Link href="/login">进入工作台</Link>
           </Button>
         </div>
       </div>

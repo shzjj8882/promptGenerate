@@ -30,12 +30,12 @@ export default function NotFound() {
               页面不存在
             </h1>
             <p className="mt-4 text-sm leading-relaxed text-zinc-600 sm:text-base dark:text-zinc-300">
-              你访问的地址可能已失效、被迁移或从未存在。建议返回控制台继续操作，或重新登录切换账号。
+              你访问的地址可能已失效、被迁移或从未存在。建议返回工作台继续操作，或重新登录切换账号。
             </p>
 
             <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center lg:justify-start">
               <Button asChild size="lg" className="sm:min-w-[170px]">
-                <Link href="/dashboard">返回控制台</Link>
+                <Link href="/dashboard">返回工作台</Link>
               </Button>
               <Button asChild variant="outline" size="lg" className="sm:min-w-[170px] bg-white/40 dark:bg-zinc-950/20">
                 <Link href="/login">重新登录</Link>

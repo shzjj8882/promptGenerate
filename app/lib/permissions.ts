@@ -13,7 +13,7 @@ export const MENU_BUTTON_PERMISSIONS = {
   role: { create: "menu:rbac:role:create", update: "menu:rbac:role:update", delete: "menu:rbac:role:delete" },
   userRole: { assign: "menu:rbac:user_role:assign" },
   tables: { create: "menu:tables:create", update: "menu:tables:update", delete: "menu:tables:delete" },
-  /** 团队：重置本团队认证码（控制台 Dashboard） */
+  /** 团队：重置本团队认证码（工作台 Dashboard） */
   team: { resetAuthcode: "menu:team:reset_authcode" },
 } as const;
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-添加「重置团队认证码」权限（控制台 Dashboard 上的「重置认证码」按钮）
+添加「重置团队认证码」权限（工作台 Dashboard 上的「重置认证码」按钮）
 - 菜单按钮权限：menu:team:reset_authcode，控制按钮显隐
 - 接口权限：team:reset_authcode，控制 /admin/teams/my-team/reset-authcode 接口
 """
@@ -12,7 +12,7 @@ from app.core.config import settings
 
 # 重置认证码权限（resource=team 用于团队成员级操作，非 teams 团队管理）
 # menu:team:reset_authcode 为按钮权限（type=button），控制 Dashboard 上的「重置认证码」按钮
-MENU_BUTTON_PERMISSION = ("menu:team:reset_authcode", "团队-重置认证码", "team", "menu_reset_authcode", "button", "控制台「重置认证码」按钮")
+MENU_BUTTON_PERMISSION = ("menu:team:reset_authcode", "团队-重置认证码", "team", "menu_reset_authcode", "button", "工作台「重置认证码」按钮")
 API_PERMISSION = ("team:reset_authcode", "团队-重置认证码(接口)", "team", "reset_authcode", "api", "重置当前用户团队认证码接口权限")
 
 
