@@ -139,9 +139,9 @@ function getResponseMessage(result: ApiResponse, fallback: string): string {
  */
 export class ApiError extends Error {
   code: number;
-  data?: any;
+  data?: unknown;
 
-  constructor(message: string, code: number = 400, data?: any) {
+  constructor(message: string, code: number = 400, data?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
@@ -167,7 +167,7 @@ function handleUnauthorized(message?: string): void {
 
 // 请求去重和取消管理
 const pendingRequests = new Map<string, AbortController>();
-const requestCache = new Map<string, { promise: Promise<any>; timestamp: number }>();
+const requestCache = new Map<string, { promise: Promise<unknown>; timestamp: number }>();
 const CACHE_DURATION = 100; // 100ms 内的相同请求会被去重
 
 /**

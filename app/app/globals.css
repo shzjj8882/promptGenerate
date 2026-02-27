@@ -120,10 +120,20 @@ html {
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* 工作台网格拖拽占位符：浅蓝色（覆盖 react-grid-layout 默认红色） */
+/* 工作台网格：拖拽占位符 + 拖拽中的瓦片，使用主题色支持亮/暗模式 */
 .react-grid-layout .react-grid-item.react-grid-placeholder {
-  background: rgb(147 197 253) !important;
-  opacity: 0.4;
+  background: var(--accent) !important;
+  opacity: 0.5;
+}
+
+/* 拖拽中的瓦片：确保背景随主题变化，避免暗色主题下白字白底 */
+.react-grid-layout .react-grid-item.react-draggable-dragging {
+  background: var(--card) !important;
+}
+
+/* 暗色主题下 resize 手柄使用浅色边框，否则黑色不可见 */
+.dark .react-grid-item > .react-resizable-handle::after {
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 @layer base {

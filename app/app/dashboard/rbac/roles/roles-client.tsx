@@ -216,8 +216,8 @@ function RolesClientImpl(props: RolesClientProps = {}) {
             if (!open) closeRoleDialog();
           }}
         >
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-            <DialogHeader>
+          <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+            <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
               <DialogTitle>
                 {editingRole ? "编辑角色" : "新建角色"}
               </DialogTitle>
@@ -226,7 +226,8 @@ function RolesClientImpl(props: RolesClientProps = {}) {
               </DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={handleSubmitRole(onSubmitRole)} className="space-y-4">
+            <form onSubmit={handleSubmitRole(onSubmitRole)} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 custom-scrollbar space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="role-name">角色名称 *</Label>
                 <Input
@@ -450,19 +451,19 @@ function RolesClientImpl(props: RolesClientProps = {}) {
                   {roleError}
                 </div>
               )}
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsRoleDialogOpen(false)}
-                >
-                  取消
-                </Button>
-                <Button type="submit" disabled={isRoleSubmitting}>
-                  {isRoleSubmitting ? "保存中..." : "保存"}
-                </Button>
-              </div>
+            </div>
+            <div className="shrink-0 px-6 py-4 border-t flex flex-row items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsRoleDialogOpen(false)}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={isRoleSubmitting}>
+                {isRoleSubmitting ? "保存中..." : "保存"}
+              </Button>
+            </div>
             </form>
           </DialogContent>
         </Dialog>

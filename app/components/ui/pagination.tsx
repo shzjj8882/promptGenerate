@@ -49,7 +49,7 @@ export function Pagination({
   const pages = getVisiblePageNumbers(safeCurrentPage, safeTotalPages);
 
   // 确保显示的值是有效的
-  const safeTotalCount = Number.isFinite(totalCount) && totalCount >= 0 ? totalCount : 0;
+  const safeTotalCount = totalCount != null && Number.isFinite(totalCount) && totalCount >= 0 ? totalCount : 0;
 
   return (
     <div className={cn("flex items-center justify-between shrink-0", className)}>

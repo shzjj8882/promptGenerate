@@ -25,13 +25,22 @@ import {
   getTables,
   getTable,
   updateTable,
+  createTableRow,
+  updateTableRow,
+  deleteTableRow,
+  deleteTableRowByCondition,
+  updateTableRowByCondition,
   type MultiDimensionTable,
   type TableRow as TableRowType,
   type TableColumn,
   type TableRowBulkData,
 } from "@/lib/api/multi-dimension-tables";
+import { filterNonDeletedRows } from "@/lib/utils/table-rows";
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { CanvasSpreadsheetTableView } from "@/app/dashboard/config/tables/canvas-spreadsheet-table-view";
+import { RowRecordDialog, type RowRecordDialogMode } from "./components/row-record-dialog";
+import { RowConditionDialog, type RowConditionDialogMode } from "./components/row-condition-dialog";
+import { RowQueryDialog } from "./components/row-query-dialog";
 import { DatePicker, DATE_FORMATS } from "@/components/ui/date-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -86,6 +95,16 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
   const [editingColumnOptions, setEditingColumnOptions] = useState<Array<{key: string, value: string}>>([]);
   const [editingColumnDateFormat, setEditingColumnDateFormat] = useState<string>("YYYY/MM/DD");
   const [editingColumnDefaultValue, setEditingColumnDefaultValue] = useState<string>("");
+
+  // 添加/编辑/删除记录对话框
+  const [rowRecordDialogOpen, setRowRecordDialogOpen] = useState(false);
+  const [rowRecordDialogMode, setRowRecordDialogMode] = useState<RowRecordDialogMode>("add");
+  const [rowRecordDialogRow, setRowRecordDialogRow] = useState<TableRowType | null>(null);
+
+  // 按条件编辑/删除对话框
+  const [rowConditionDialogOpen, setRowConditionDialogOpen] = useState(false);
+  const [rowConditionDialogMode, setRowConditionDialogMode] = useState<RowConditionDialogMode>("edit_by_condition");
+  const [rowQueryDialogOpen, setRowQueryDialogOpen] = useState(false);
 
   const { handleError } = useErrorHandler({
     showToast: true,
@@ -150,16 +169,27 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
     }
   };
 
-  const fetchTableRows = useCallback(async (tableId: string) => {
+  const fetchTableRows = useCallback(async (tableId: string, options?: { resetHistory?: boolean }) => {
     if (!tableId) return;
     try {
       setLoadingRows(true);
-      // 使用合并后的接口获取表格和行数据
       const tableData = await getTable(tableId, true);
       const data = tableData.rows || [];
       setTableRows(data);
       setLocalRows(data);
       setHasUnsavedChanges(false);
+      // 编辑后刷新时同步更新 table 对象，确保列定义等元数据一致
+      setTable((prev) => (prev ? { ...prev, ...tableData, rows: data } : prev));
+      if (options?.resetHistory) {
+        const initialState: HistoryState = {
+          rows: JSON.parse(JSON.stringify(data)),
+          columns: JSON.parse(JSON.stringify(tableData.columns || [])),
+        };
+        setHistory([initialState]);
+        setHistoryIndex(0);
+        historyIndexRef.current = 0;
+        historyInitializedRef.current = true;
+      }
     } catch (error) {
       handleError(error, "加载表格行数据失败");
     } finally {
@@ -223,73 +253,29 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
 
   // 记录历史状态
   const recordHistory = useCallback((rows: TableRowType[], columns: TableColumn[]) => {
-    console.log('[记录历史] 开始记录历史', {
-      isUndoRedo,
-      historyInitialized: historyInitializedRef.current,
-      rowsCount: rows.length,
-      columnsCount: columns.length,
-      currentHistoryIndex: historyIndexRef.current,
-    });
-    
-    if (isUndoRedo) {
-      console.log('[记录历史] 跳过记录（撤销/重做操作）');
-      return;
-    }
-    
-    // 如果历史记录还未初始化，不记录（等待初始化）
-    if (!historyInitializedRef.current) {
-      console.log('[记录历史] 跳过记录（历史记录未初始化）');
-      return;
-    }
-    
+    if (isUndoRedo) return;
+    if (!historyInitializedRef.current) return;
+
     const newState: HistoryState = {
       rows: JSON.parse(JSON.stringify(rows)),
       columns: JSON.parse(JSON.stringify(columns)),
     };
-    
-    console.log('[记录历史] 创建新状态', {
-      newStateRowsCount: newState.rows.length,
-      deletedRowsCount: newState.rows.filter((r: any) => r._deleted).length,
-    });
-    
+
     setHistory(prev => {
-      const currentIndex = historyIndexRef.current; // 使用 ref 获取最新值
-      
-      console.log('[记录历史] 更新历史记录', {
-        prevHistoryLength: prev.length,
-        currentIndex,
-      });
-      
-      // 如果历史记录为空，不应该发生（因为已经检查了 historyInitializedRef）
-      // 但为了安全，还是处理一下
+      const currentIndex = historyIndexRef.current;
       if (prev.length === 0) {
-        console.log('[记录历史] 历史记录为空，初始化第一条记录');
         const newHistory = [newState];
         const newIndex = 0;
         setHistoryIndex(newIndex);
         historyIndexRef.current = newIndex;
-        console.log('[记录历史] 历史记录已初始化', {
-          newHistoryLength: newHistory.length,
-          newIndex,
-        });
         return newHistory;
       }
-      
       const newHistory = prev.slice(0, currentIndex + 1);
       newHistory.push(newState);
-      if (newHistory.length > 50) {
-        newHistory.shift();
-      }
+      if (newHistory.length > 50) newHistory.shift();
       const newIndex = newHistory.length - 1;
       setHistoryIndex(newIndex);
-      historyIndexRef.current = newIndex; // 同步更新 ref
-      
-      console.log('[记录历史] 历史记录已更新', {
-        newHistoryLength: newHistory.length,
-        newIndex,
-        deletedRowsInNewState: newState.rows.filter((r: any) => r._deleted).length,
-      });
-      
+      historyIndexRef.current = newIndex;
       return newHistory;
     });
   }, [isUndoRedo]);
@@ -384,8 +370,7 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
       
       // 准备批量保存的数据（全量保存，排除已标记删除的行）
       // 保留已存在行的 row_id，只对新行自动生成 row_id
-      const rowsToSave: TableRowBulkData[] = localRows
-        .filter(row => !(row as any)._deleted) // 排除已标记删除的行
+      const rowsToSave: TableRowBulkData[] = filterNonDeletedRows(localRows)
         .map(row => {
           const rowData: TableRowBulkData = {
             cells: row.cells,
@@ -443,78 +428,99 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
     }
   };
 
+  const handleOpenAddRecordDialog = () => {
+    setRowRecordDialogMode("add");
+    setRowRecordDialogRow(null);
+    setRowRecordDialogOpen(true);
+  };
+
+  const handleOpenEditRecordDialog = (row: TableRowType) => {
+    setRowRecordDialogMode("edit");
+    setRowRecordDialogRow(row);
+    setRowRecordDialogOpen(true);
+  };
+
+  const handleOpenDeleteRecordDialog = (row: TableRowType) => {
+    setRowRecordDialogMode("delete");
+    setRowRecordDialogRow(row);
+    setRowRecordDialogOpen(true);
+  };
+
+  const handleRowRecordSubmit = useCallback(
+    async (mode: RowRecordDialogMode, cells?: Record<string, string>) => {
+      if (!table) return;
+
+      try {
+        if (mode === "add" && cells) {
+          await createTableRow(table.id, { cells });
+          await fetchTableRows(table.id, { resetHistory: true });
+          onTableUpdated?.();
+        } else if (mode === "edit" && rowRecordDialogRow && cells) {
+          await updateTableRow(table.id, rowRecordDialogRow.id, { cells });
+          await fetchTableRows(table.id, { resetHistory: true });
+          onTableUpdated?.();
+        } else if (mode === "delete" && rowRecordDialogRow) {
+          await deleteTableRow(table.id, rowRecordDialogRow.id);
+          await fetchTableRows(table.id, { resetHistory: true });
+          setHasUnsavedChanges(false);
+          onTableUpdated?.();
+        }
+      } catch (error) {
+        handleError(error, mode === "add" ? "添加记录失败" : mode === "edit" ? "修改记录失败" : "删除记录失败");
+        throw error;
+      }
+    },
+    [table, rowRecordDialogRow, localRows, fetchTableRows, handleError, onTableUpdated]
+  );
+
   const handleCreateRow = () => {
-    if (!table) return;
-    
-    // 初始化单元格数据，使用列的默认值（不复制上一行数据）
-    const initialCells: Record<string, string> = {};
-    table.columns.forEach(col => {
-      initialCells[col.key] = col.options?.defaultValue || "";
-    });
-    
-    // 计算临时 row_id：基于当前最大 row_id + 1
-    const maxRowId = localRows.length > 0 
-      ? Math.max(...localRows.map(r => r.row_id >= 0 ? r.row_id : -1), -1)
-      : -1;
-    const tempRowId = maxRowId + 1;
-    
-    // 创建临时行，使用临时 row_id（保存时后端会重新分配）
-    const tempRow: TableRowType = {
-      id: `temp-${Date.now()}-${Math.random()}`,
-      table_id: table.id,
-      row_id: tempRowId, // 临时 row_id，保存时后端会重新分配
-      cells: initialCells,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    
-    const newRows = [...localRows, tempRow];
-    setLocalRows(newRows);
-    setHasUnsavedChanges(true);
-    recordHistory(newRows, table.columns);
+    handleOpenAddRecordDialog();
   };
 
   const handleDeleteRow = (row: TableRowType) => {
-    if (!table) return;
-    
-    console.log('[删除行] 开始删除操作', {
-      rowId: row.id,
-      historyInitialized: historyInitializedRef.current,
-      historyLength: history.length,
-      historyIndex: historyIndexRef.current,
-      localRowsCount: localRows.length,
-    });
-    
-    // 确保历史记录已初始化（如果未初始化，先初始化）
-    if (!historyInitializedRef.current && history.length === 0) {
-      console.log('[删除行] 历史记录未初始化，先初始化历史记录');
-      const initialState: HistoryState = {
-        rows: JSON.parse(JSON.stringify(localRows)),
-        columns: JSON.parse(JSON.stringify(table.columns)),
-      };
-      setHistory([initialState]);
-      setHistoryIndex(0);
-      historyIndexRef.current = 0;
-      historyInitializedRef.current = true;
-      console.log('[删除行] 历史记录已初始化', {
-        initialStateRowsCount: initialState.rows.length,
-      });
-    }
-    
-    // 标记行为已删除（保留 id，避免其他行的 id 变化）
-    const newRows = localRows.map(r => 
-      r.id === row.id ? { ...r, _deleted: true } : r
-    );
-    setLocalRows(newRows);
-    setHasUnsavedChanges(true);
-    
-    console.log('[删除行] 准备记录历史', {
-      newRowsCount: newRows.length,
-      deletedRowId: row.id,
-    });
-    
-    recordHistory(newRows, table.columns);
+    handleOpenDeleteRecordDialog(row);
   };
+
+  const handleOpenEditByConditionDialog = () => {
+    setRowConditionDialogMode("edit_by_condition");
+    setRowConditionDialogOpen(true);
+  };
+
+  const handleOpenDeleteByConditionDialog = () => {
+    setRowConditionDialogMode("delete_by_condition");
+    setRowConditionDialogOpen(true);
+  };
+
+  const handleOpenQueryByConditionDialog = () => {
+    setRowQueryDialogOpen(true);
+  };
+
+  const handleRowConditionSubmit = useCallback(
+    async (
+      mode: RowConditionDialogMode,
+      condition: { column_key: string; value: string },
+      cells?: Record<string, string>
+    ) => {
+      if (!table) return;
+
+      try {
+        if (mode === "edit_by_condition" && cells) {
+          await updateTableRowByCondition(table.id, { condition, cells });
+        } else if (mode === "delete_by_condition") {
+          await deleteTableRowByCondition(table.id, { condition });
+        }
+        await fetchTableRows(table.id, { resetHistory: true });
+        onTableUpdated?.();
+      } catch (error) {
+        handleError(
+          error,
+          mode === "edit_by_condition" ? "按条件编辑失败" : "按条件删除失败"
+        );
+        throw error;
+      }
+    },
+    [table, fetchTableRows, handleError, onTableUpdated]
+  );
 
   // 处理 Excel 导入时创建新列
   const handleImportColumns = useCallback((newColumns: Array<{ key: string; label: string; type?: string; defaultValue?: string }>, mode: "append" | "replace" = "append") => {
@@ -862,8 +868,8 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
   }
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden min-h-0">
-      <div className="rounded-lg border bg-card flex flex-col overflow-hidden flex-1 min-h-0">
+    <div className="h-full w-full flex flex-col overflow-hidden min-h-0 min-w-0">
+      <div className="rounded-lg border bg-card flex flex-col overflow-hidden flex-1 min-h-0 min-w-0">
         <CanvasSpreadsheetTableView
           table={table}
           rows={localRows}
@@ -873,7 +879,11 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
           onAddColumn={handleAddColumn}
           onDeleteColumn={handleDeleteColumn}
           onEditColumn={handleEditColumn}
+          onEditRow={handleOpenEditRecordDialog}
           onDeleteRow={handleDeleteRow}
+          onEditByCondition={handleOpenEditByConditionDialog}
+          onDeleteByCondition={handleOpenDeleteByConditionDialog}
+          onQueryByCondition={handleOpenQueryByConditionDialog}
           onUndo={handleUndo}
           onRedo={handleRedo}
           canUndo={historyIndex > 0}
@@ -886,9 +896,35 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
         />
       </div>
 
+      {/* 添加/编辑/删除记录对话框 */}
+      {table && (
+        <>
+          <RowRecordDialog
+            open={rowRecordDialogOpen}
+            onOpenChange={setRowRecordDialogOpen}
+            mode={rowRecordDialogMode}
+            table={table}
+            row={rowRecordDialogRow ?? undefined}
+            onSubmit={handleRowRecordSubmit}
+          />
+          <RowConditionDialog
+            open={rowConditionDialogOpen}
+            onOpenChange={setRowConditionDialogOpen}
+            mode={rowConditionDialogMode}
+            table={table}
+            onSubmit={handleRowConditionSubmit}
+          />
+          <RowQueryDialog
+            open={rowQueryDialogOpen}
+            onOpenChange={setRowQueryDialogOpen}
+            table={table}
+          />
+        </>
+      )}
+
       {/* 添加列对话框 */}
       <Dialog open={isAddColumnDialogOpen} onOpenChange={setIsAddColumnDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[85dvh] sm:max-h-[90vh] mx-auto overflow-y-auto">
           <DialogHeader>
             <DialogTitle>添加列</DialogTitle>
             <DialogDescription>添加一个新的列到表格中</DialogDescription>

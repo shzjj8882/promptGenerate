@@ -967,6 +967,7 @@ class RoleService:
                     # 核心业务菜单
                     "menu:tenant:list",          # 租户管理
                     "menu:prompts:list",         # 提示词管理
+                    "menu:compositions:list",    # 组合（独立页面）
                     # 配置中心相关
                     "menu:config",
                     "menu:config:scenes",

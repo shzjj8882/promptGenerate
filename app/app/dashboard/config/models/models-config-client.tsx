@@ -97,7 +97,7 @@ function ModelsConfigClientImpl() {
   const fetchModels = async () => {
     try {
       setLoading(true);
-      const response = await getLLMModels({ limit: 1000 });
+      const response = await getLLMModels({ limit: 500 });
       setModels(response.items);
     } catch (error) {
       handleError(error, "加载模型列表失败");
@@ -441,12 +441,13 @@ function ModelsConfigClientImpl() {
 
       {/* 创建对话框 */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
             <DialogTitle>新建模型</DialogTitle>
             <DialogDescription>配置 LLM 模型的基本信息和 API 参数</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+          <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="name">模型名称 *</Label>
@@ -545,7 +546,8 @@ function ModelsConfigClientImpl() {
               </div>
             </div>
           </div>
-          <DialogFooter>
+          </div>
+          <DialogFooter className="shrink-0 px-6 py-4 border-t">
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               取消
             </Button>
@@ -556,12 +558,13 @@ function ModelsConfigClientImpl() {
 
       {/* 编辑对话框 */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
             <DialogTitle>编辑模型</DialogTitle>
             <DialogDescription>修改模型配置信息</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+          <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="edit-name">模型名称 *</Label>
@@ -658,7 +661,8 @@ function ModelsConfigClientImpl() {
               </div>
             </div>
           </div>
-          <DialogFooter>
+          </div>
+          <DialogFooter className="shrink-0 px-6 py-4 border-t">
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               取消
             </Button>

@@ -617,8 +617,8 @@ function RBACClientImpl(props: RBACClientProps = {}) {
               if (!open) closeRoleDialog();
             }}
           >
-            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-              <DialogHeader>
+            <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+              <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
                 <DialogTitle>
                   {editingRole ? "编辑角色" : "新建角色"}
                 </DialogTitle>
@@ -627,7 +627,8 @@ function RBACClientImpl(props: RBACClientProps = {}) {
                 </DialogDescription>
               </DialogHeader>
 
-              <form onSubmit={handleSubmitRole(onSubmitRole)} className="space-y-4">
+              <form onSubmit={handleSubmitRole(onSubmitRole)} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 custom-scrollbar space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="role-name">角色名称 *</Label>
                   <Input
@@ -855,19 +856,19 @@ function RBACClientImpl(props: RBACClientProps = {}) {
                     {roleError}
                   </div>
                 )}
-
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setIsRoleDialogOpen(false)}
-                  >
-                    取消
-                  </Button>
-                  <Button type="submit" disabled={isRoleSubmitting}>
-                    {isRoleSubmitting ? "保存中..." : "保存"}
-                  </Button>
-                </div>
+              </div>
+              <div className="shrink-0 px-6 py-4 border-t flex flex-row items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsRoleDialogOpen(false)}
+                >
+                  取消
+                </Button>
+                <Button type="submit" disabled={isRoleSubmitting}>
+                  {isRoleSubmitting ? "保存中..." : "保存"}
+                </Button>
+              </div>
               </form>
             </DialogContent>
           </Dialog>
@@ -1022,14 +1023,15 @@ function RBACClientImpl(props: RBACClientProps = {}) {
               }
             }}
           >
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-              <DialogHeader>
+            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+              <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
                 <DialogTitle>为用户分配角色</DialogTitle>
                 <DialogDescription>
                   为用户 <span className="font-semibold">{editingUser?.username}</span> 分配角色
                 </DialogDescription>
               </DialogHeader>
 
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 custom-scrollbar">
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>用户信息</Label>
@@ -1088,19 +1090,19 @@ function RBACClientImpl(props: RBACClientProps = {}) {
                     {userRoleError}
                   </div>
                 )}
-
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setIsUserRoleDialogOpen(false)}
-                  >
-                    取消
-                  </Button>
-                  <Button onClick={handleSubmitUserRoles}>
-                    保存
-                  </Button>
-                </div>
+              </div>
+              </div>
+              <div className="shrink-0 px-6 py-4 border-t flex flex-row items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsUserRoleDialogOpen(false)}
+                >
+                  取消
+                </Button>
+                <Button onClick={handleSubmitUserRoles}>
+                  保存
+                </Button>
               </div>
             </DialogContent>
           </Dialog>

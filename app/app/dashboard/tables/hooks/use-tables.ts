@@ -25,7 +25,6 @@ export function useTables({ initialTables, initialTotal, onTotalChange }: UseTab
     
     // 验证 page 参数
     if (!Number.isFinite(page) || page < 1) {
-      console.warn("Invalid page number:", page);
       return;
     }
     
@@ -36,7 +35,6 @@ export function useTables({ initialTables, initialTotal, onTotalChange }: UseTab
       
       // 确保 calculatedSkip 是有效数字
       if (!Number.isFinite(calculatedSkip) || calculatedSkip < 0) {
-        console.warn("Invalid skip value:", calculatedSkip);
         return;
       }
       

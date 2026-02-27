@@ -69,7 +69,7 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
   // 获取所有菜单权限（用于父菜单选择）
   const fetchAllMenus = useCallback(async () => {
     try {
-      const response = await getPermissions({ type: "menu", is_active: true, limit: 1000 });
+      const response = await getPermissions({ type: "menu", is_active: true, limit: 500 });
       setAllMenus(response.items);
     } catch (err) {
       handleError(err, "获取菜单列表失败");

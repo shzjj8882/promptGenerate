@@ -1,7 +1,7 @@
 """
 LLM Chat 相关接口
 """
-from fastapi import APIRouter, Depends, HTTPException, Path, Body
+from fastapi import APIRouter, Depends, HTTPException, Path, Body, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Optional, Any, List
@@ -19,6 +19,9 @@ import json
 import asyncio
 import inspect
 import traceback
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -66,6 +69,10 @@ class NotificationOption(BaseModel):
     type: Optional[str] = Body(None, description="通知类型：none | email")
     config_id: Optional[str] = Body(None, description="通知配置 ID（如邮件配置）")
     email_to: Optional[str] = Body(None, description="收件人邮箱（邮件通知时必填）")
+    email_content_type: Optional[str] = Body(
+        "html",
+        description="邮件正文格式：html（富文本）| plain（纯文本）| file（文件附件）",
+    )
 
 
 class PromptApiRequest(BaseModel):
@@ -580,13 +587,8 @@ async def convert_prompt(
             detail=f"场景 {scene} 的提示词不存在"
         )
     
-    # 打印原始提示词（使用 print 确保输出到标准输出）
-    import sys
-    print("=" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 场景: {scene}, 租户ID: {tenant_id}, 团队代码: {team_code}", file=sys.stderr, flush=True)
-    print(f"[提示词调试] 原始提示词内容:", file=sys.stderr, flush=True)
-    print(f"{prompt.content}", file=sys.stderr, flush=True)
-    print("=" * 80, file=sys.stderr, flush=True)
+    if settings.DEBUG:
+        logger.debug("[提示词调试] 场景=%s 租户ID=%s 团队代码=%s 原始内容=%s", scene, tenant_id, team_code, (prompt.content or "")[:200])
     
     # 2. 获取团队信息（从场景或请求头获取）
     team_id = None
@@ -619,13 +621,9 @@ async def convert_prompt(
         team_code=team_code,
     )
     
-    # 打印处理后的提示词（使用 print 确保输出到标准输出）
-    print("=" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 处理后的提示词内容:", file=sys.stderr, flush=True)
-    print(f"{processed_content}", file=sys.stderr, flush=True)
-    print(f"[提示词调试] 占位符参数: {request.additional_params or {}}", file=sys.stderr, flush=True)
-    print("=" * 80, file=sys.stderr, flush=True)
-    
+    if settings.DEBUG:
+        logger.debug("[提示词调试] 处理后内容=%s 占位符参数=%s", (processed_content or "")[:200], request.additional_params or {})
+
     # 4. 返回处理后的提示词内容（非流式）
     return ResponseModel.success_response(
         data=PromptConvertResponse(
@@ -716,13 +714,8 @@ async def chat_prompt(
             detail=f"场景 {scene} 的提示词不存在"
         )
     
-    # 打印原始提示词（使用 print 确保输出到标准输出）
-    import sys
-    print("=" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 场景: {scene}, 租户ID: {tenant_id}, 团队代码: {team_code}", file=sys.stderr, flush=True)
-    print(f"[提示词调试] 原始提示词内容:", file=sys.stderr, flush=True)
-    print(f"{prompt.content}", file=sys.stderr, flush=True)
-    print("=" * 80, file=sys.stderr, flush=True)
+    if settings.DEBUG:
+        logger.debug("[提示词调试] 场景=%s 租户ID=%s 团队代码=%s 原始内容=%s", scene, tenant_id, team_code, (prompt.content or "")[:200])
     
     # 2. 获取团队信息（从场景或请求头获取）
     team_id = None
@@ -755,15 +748,8 @@ async def chat_prompt(
         team_code=team_code,
     )
     
-    # 打印处理后的提示词和用户消息（使用 print 确保输出到标准输出）
-    print("=" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 处理后的提示词内容:", file=sys.stderr, flush=True)
-    print(f"{processed_content}", file=sys.stderr, flush=True)
-    print("-" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 用户消息:", file=sys.stderr, flush=True)
-    print(f"{request.user_message}", file=sys.stderr, flush=True)
-    print(f"[提示词调试] 占位符参数: {request.additional_params or {}}", file=sys.stderr, flush=True)
-    print("=" * 80, file=sys.stderr, flush=True)
+    if settings.DEBUG:
+        logger.debug("[提示词调试] 处理后内容=%s 用户消息=%s 占位符参数=%s", (processed_content or "")[:200], (request.user_message or "")[:100], request.additional_params or {})
     
     # 4. 获取模型配置（必须提供 model_id，不再支持默认模型）
     if not request.model_id:
@@ -966,6 +952,7 @@ async def chat_prompt(
 async def api_prompt(
     scene: str = Path(..., description="场景代码（如：dev、custom_scene）", examples=["dev"]),
     request: PromptApiRequest = Body(...),
+    sync: bool = Query(False, description="设为 true 时同步等待 LLM 返回，否则走异步队列"),
     team_code_from_auth: Optional[str] = Depends(get_team_code_from_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1037,13 +1024,8 @@ async def api_prompt(
             detail=f"场景 {scene} 的提示词不存在"
         )
     
-    # 打印原始提示词（使用 print 确保输出到标准输出）
-    import sys
-    print("=" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 场景: {scene}, 租户ID: {tenant_id}, 团队代码: {team_code}", file=sys.stderr, flush=True)
-    print(f"[提示词调试] 原始提示词内容:", file=sys.stderr, flush=True)
-    print(f"{prompt.content}", file=sys.stderr, flush=True)
-    print("=" * 80, file=sys.stderr, flush=True)
+    if settings.DEBUG:
+        logger.debug("[提示词调试] 场景=%s 租户ID=%s 团队代码=%s 原始内容=%s", scene, tenant_id, team_code, (prompt.content or "")[:200])
     
     # 2. 获取团队信息（从场景或请求头获取）
     team_id = None
@@ -1056,18 +1038,23 @@ async def api_prompt(
     # 2.5 异步模式：有通知时创建任务、推队列、立即返回 task_id
     notif = request.notification
     if notif and notif.type and notif.type != "none":
+        from app.services.llmchat_task_service import LLMChatTaskService
+        request_dict = {
+            "tenantCode": request.tenantCode,
+            "teamCode": request.teamCode or team_code,
+            "additional_params": request.additional_params or {},
+            "user_message": request.user_message,
+            "model_id": request.model_id,
+            "llm_config": request.llm_config.model_dump() if request.llm_config else {},
+            "conversation_id": request.conversation_id,
+            "mcp_id": request.mcp_id,
+            "mcp_tool_names": request.mcp_tool_names,
+        }
         if notif.type == "email" and notif.email_to:
-            from app.services.llmchat_task_service import LLMChatTaskService
-            request_dict = {
-                "tenantCode": request.tenantCode,
-                "teamCode": request.teamCode or team_code,
-                "additional_params": request.additional_params or {},
-                "user_message": request.user_message,
-                "model_id": request.model_id,
-                "llm_config": request.llm_config.model_dump() if request.llm_config else {},
-                "conversation_id": request.conversation_id,
-                "mcp_id": request.mcp_id,
-                "mcp_tool_names": request.mcp_tool_names,
+            notif_cfg = {
+                "email_to": notif.email_to,
+                "config_id": notif.config_id,
+                "content_type": notif.email_content_type or "html",
             }
             task = await LLMChatTaskService.create_task(
                 db=db,
@@ -1075,14 +1062,23 @@ async def api_prompt(
                 request_payload=request_dict,
                 team_id=team_id,
                 notification_type="email",
-                notification_config={"email_to": notif.email_to, "config_id": notif.config_id},
+                notification_config=notif_cfg,
             )
             await db.commit()
+            await LLMChatTaskService.push_task_to_stream(
+                task_id=task.id,
+                scene=scene,
+                request_payload=request_dict,
+                team_id=team_id,
+                notification_type="email",
+                notification_config=notif_cfg,
+            )
             return ResponseModel.success_response(
                 data={"task_id": task.id, "status": "pending", "message": "任务已提交，完成后将发送邮件通知"},
                 message="异步任务已创建"
             )
-        raise HTTPException(status_code=400, detail="邮件通知需提供 email_to")
+        if notif.type == "email":
+            raise HTTPException(status_code=400, detail="邮件通知需提供 email_to")
     
     # 3. 获取占位符配置，检查是否需要租户信息（使用 Service 层，按团队过滤）
     placeholders = await PlaceholderService.get_placeholders_by_scene(
@@ -1094,6 +1090,44 @@ async def api_prompt(
         raise HTTPException(
             status_code=400,
             detail="该提示词包含需要租户信息的占位符，请提供 tenantCode"
+        )
+
+    # 3.5 异步队列模式：无通知时也走队列（减轻 API 压力），除非 sync=true
+    if not sync and getattr(settings, "LLM_API_ASYNC_DEFAULT", True):
+        from app.services.llmchat_task_service import LLMChatTaskService
+        request_dict = {
+            "tenantCode": request.tenantCode,
+            "teamCode": request.teamCode or team_code,
+            "additional_params": request.additional_params or {},
+            "user_message": request.user_message,
+            "model_id": request.model_id,
+            "llm_config": request.llm_config.model_dump() if request.llm_config else {},
+            "conversation_id": request.conversation_id,
+            "mcp_id": request.mcp_id,
+            "mcp_tool_names": request.mcp_tool_names,
+        }
+        if not request.model_id:
+            raise HTTPException(status_code=400, detail="必须指定模型ID（model_id）")
+        task = await LLMChatTaskService.create_task(
+            db=db,
+            scene=scene,
+            request_payload=request_dict,
+            team_id=team_id,
+            notification_type="none",
+            notification_config=None,
+        )
+        await db.commit()
+        await LLMChatTaskService.push_task_to_stream(
+            task_id=task.id,
+            scene=scene,
+            request_payload=request_dict,
+            team_id=team_id,
+            notification_type="none",
+            notification_config=None,
+        )
+        return ResponseModel.success_response(
+            data={"task_id": task.id, "status": "pending", "message": "任务已提交，请轮询 GET /api/llmchat/tasks/{task_id} 获取结果"},
+            message="异步任务已创建"
         )
     
     # 4. 处理占位符
@@ -1107,15 +1141,8 @@ async def api_prompt(
         team_code=team_code,
     )
     
-    # 打印处理后的提示词和用户消息（使用 print 确保输出到标准输出）
-    print("=" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 处理后的提示词内容:", file=sys.stderr, flush=True)
-    print(f"{processed_content}", file=sys.stderr, flush=True)
-    print("-" * 80, file=sys.stderr, flush=True)
-    print(f"[提示词调试] 用户消息:", file=sys.stderr, flush=True)
-    print(f"{request.user_message}", file=sys.stderr, flush=True)
-    print(f"[提示词调试] 占位符参数: {request.additional_params or {}}", file=sys.stderr, flush=True)
-    print("=" * 80, file=sys.stderr, flush=True)
+    if settings.DEBUG:
+        logger.debug("[提示词调试] 处理后内容=%s 用户消息=%s 占位符参数=%s", (processed_content or "")[:200], (request.user_message or "")[:100], request.additional_params or {})
     
     # 4. 获取模型配置（必须提供 model_id，不再支持默认模型）
     if not request.model_id:

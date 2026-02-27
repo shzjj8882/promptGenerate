@@ -1,7 +1,7 @@
 /**
  * 菜单配置：菜单 code 到路径和图标的映射
  */
-import { Building2, BookOpenText, MessageSquareText, Shield, Users, Settings, Layers, FileText, Table, UserCog, Menu, Cpu, Plug, Mail } from "lucide-react";
+import { Building2, BookOpenText, MessageSquareText, Shield, Users, Settings, Layers, FileText, Table, UserCog, Menu, Cpu, Plug, Mail, Puzzle } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
 /**
@@ -10,6 +10,7 @@ import { LucideIcon } from "lucide-react";
 export const MENU_CODE_TO_HREF: Record<string, string> = {
   "menu:tenant:list": "/dashboard/tenants",
   "menu:prompts:list": "/dashboard/prompts",
+  "menu:compositions:list": "/dashboard/compositions",
   "menu:rbac": "/dashboard/rbac/roles", // 权限管理父菜单默认跳转到角色管理
   "menu:rbac:roles:list": "/dashboard/rbac/roles",
   "menu:rbac:user_roles:list": "/dashboard/rbac/user-roles",
@@ -32,6 +33,7 @@ export const MENU_CODE_TO_ICON: Record<string, LucideIcon> = {
   "menu:tenant:list": Building2,
   "menu:teams:list": Users,
   "menu:prompts:list": MessageSquareText,
+  "menu:compositions:list": Puzzle,
   "menu:rbac": Shield,
   "menu:rbac:roles:list": Users,
   "menu:rbac:user_roles:list": UserCog,

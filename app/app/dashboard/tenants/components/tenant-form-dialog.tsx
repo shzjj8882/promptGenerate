@@ -1,6 +1,12 @@
 "use client";
 
 import { memo } from "react";
+import type {
+  UseFormRegister,
+  UseFormHandleSubmit,
+  FieldErrors,
+  SubmitHandler,
+} from "react-hook-form";
 import {
   Dialog,
   DialogContent,
@@ -13,18 +19,19 @@ import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Tenant } from "@/lib/api/tenants";
+import type { TenantFormData } from "../hooks/use-tenant-form";
 
 interface TenantFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingTenant: Tenant | null;
   error: string;
-  register: any;
-  handleSubmit: any;
-  errors: any;
+  register: UseFormRegister<TenantFormData>;
+  handleSubmit: UseFormHandleSubmit<TenantFormData>;
+  errors: FieldErrors<TenantFormData>;
   isSubmitting: boolean;
   onClose: () => void;
-  onSubmit: (data: any) => void;
+  onSubmit: SubmitHandler<TenantFormData>;
   reset: () => void;
 }
 

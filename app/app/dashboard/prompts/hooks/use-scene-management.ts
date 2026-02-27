@@ -75,7 +75,7 @@ export function useSceneManagement({
     const fetchPlaceholders = async () => {
       try {
         setLoadingPlaceholders(true);
-        const response = await getPlaceholders({ limit: 1000 }); // 获取所有占位符
+        const response = await getPlaceholders({ limit: 500 });
         const allPlaceholders = response.items || [];
         
         // 去重：同一个 key 只保留一个占位符

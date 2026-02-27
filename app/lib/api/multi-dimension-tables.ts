@@ -50,12 +50,14 @@ export interface TableRow {
   row_id: number;
   team_id?: string;
   team_code?: string;
-  row_data?: Record<string, any>;
+  row_data?: Record<string, unknown>;
   cells: Record<string, string>;
   created_by?: string;
   updated_by?: string;
   created_at: string;
   updated_at: string;
+  /** 本地标记删除，保存时排除 */
+  _deleted?: boolean;
 }
 
 export interface TableRowCreate {
@@ -171,6 +173,84 @@ export async function deleteTableRow(tableId: string, rowId: string): Promise<vo
   return apiRequest<void>(`/admin/multi-dimension-tables/${tableId}/rows/${rowId}`, {
     method: "DELETE",
   });
+}
+
+/** 条件：column_key + value */
+export interface TableRowCondition {
+  column_key: string;
+  value: string;
+}
+
+/** 按条件删除 */
+export interface TableRowDeleteByConditionRequest {
+  condition: TableRowCondition;
+}
+
+/** 按条件更新 */
+export interface TableRowUpdateByConditionRequest {
+  condition: TableRowCondition;
+  cells?: Record<string, string>;
+  row_data?: Record<string, unknown>;
+}
+
+export async function deleteTableRowByCondition(
+  tableId: string,
+  data: TableRowDeleteByConditionRequest
+): Promise<{ deleted_count: number; deleted_row_ids: string[] }> {
+  return apiRequest<{ deleted_count: number; deleted_row_ids: string[] }>(
+    `/admin/multi-dimension-tables/${tableId}/rows/by-condition`,
+    {
+      method: "DELETE",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function updateTableRowByCondition(
+  tableId: string,
+  data: TableRowUpdateByConditionRequest
+): Promise<{ updated_count: number; updated_row_ids: string[] }> {
+  return apiRequest<{ updated_count: number; updated_row_ids: string[] }>(
+    `/admin/multi-dimension-tables/${tableId}/rows/by-condition`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+/** 多条件查询中的单个条件 */
+export interface TableRowQueryCondition {
+  column_key: string;
+  operator?: string; // equals | contains | not_equals | not_contains | starts_with | ends_with
+  value: string;
+}
+
+/** 多条件查询请求 */
+export interface TableRowQueryByConditionsRequest {
+  conditions: TableRowQueryCondition[];
+  logic?: "and" | "or";
+  limit?: number; // 1 表示只返回单条
+}
+
+/** 多条件查询响应 */
+export interface TableRowQueryByConditionsResponse {
+  rows: TableRow[];
+  total: number;
+  row?: TableRow | null; // limit=1 时返回单条
+}
+
+export async function queryTableRowsByConditions(
+  tableId: string,
+  data: TableRowQueryByConditionsRequest
+): Promise<TableRowQueryByConditionsResponse> {
+  return apiRequest<TableRowQueryByConditionsResponse>(
+    `/admin/multi-dimension-tables/${tableId}/rows/query-by-conditions`,
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
 }
 
 export async function bulkSaveTableRows(tableId: string, data: TableRowsBulkSave): Promise<TableRow[]> {

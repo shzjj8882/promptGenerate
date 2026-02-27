@@ -28,7 +28,7 @@ export default async function TableDetailPage({
     const rowsData = tableData.rows || [];
     
     return (
-      <div className="h-full w-full flex flex-col overflow-hidden">
+      <div className="h-full w-full flex flex-col overflow-hidden flex-1 min-h-0">
         <TableDetailClientDynamic 
           tableId={id} 
           initialTable={tableData}
@@ -39,7 +39,7 @@ export default async function TableDetailPage({
   } catch {
     // SSR 获取失败时，退回到客户端自行拉取，避免整页报错
     return (
-      <div className="h-full w-full flex flex-col overflow-hidden">
+      <div className="h-full w-full flex flex-col overflow-hidden flex-1 min-h-0">
         <TableDetailClientDynamic tableId={id} />
       </div>
     );

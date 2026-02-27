@@ -102,7 +102,7 @@ async def delete_cache(key: str) -> None:
 
 async def delete_cache_pattern(pattern: str) -> None:
     """
-    按模式删除缓存（性能警告：keys() 会阻塞 Redis）
+    按模式删除缓存（使用 SCAN 替代 keys()，避免阻塞 Redis）
     
     注意：此方法仅用于兼容性，新代码应避免使用。
     推荐使用 delete_cache_keys() 直接删除已知的 key 列表。
@@ -111,12 +111,20 @@ async def delete_cache_pattern(pattern: str) -> None:
     if not redis:
         return
     try:
-        # 警告：keys() 在生产环境中可能阻塞 Redis
-        # 仅在缓存 key 数量较少时使用
-        keys = await redis.keys(pattern)
-        if keys:
-            await redis.delete(*keys)
-            logger.debug(f"删除缓存模式 {pattern}，共 {len(keys)} 个 key")
+        total = 0
+        batch: List[str] = []
+        batch_size = 100
+        async for key in redis.scan_iter(match=pattern, count=batch_size):
+            batch.append(key)
+            if len(batch) >= batch_size:
+                await redis.delete(*batch)
+                total += len(batch)
+                batch = []
+        if batch:
+            await redis.delete(*batch)
+            total += len(batch)
+        if total > 0:
+            logger.debug(f"删除缓存模式 {pattern}，共 {total} 个 key")
     except Exception as e:
         logger.warning(f"Redis delete pattern 失败: {e}")
 

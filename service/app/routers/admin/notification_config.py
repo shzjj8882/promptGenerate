@@ -50,7 +50,7 @@ async def list_notification_configs(
     email_cfg = await NotificationConfigService.get_by_type(db, "email", team_id)
     if not email_cfg:
         email_cfg = await NotificationConfigService.get_or_create_by_type(
-            db, "email", "邮件通知（SendCloud）", team_id
+            db, "email", "邮件通知", team_id
         )
         await db.commit()
         configs = await NotificationConfigService.list_for_team(db, team_id=team_id)
@@ -62,7 +62,7 @@ async def list_notification_configs(
             id=cfg.id,
             type=cfg.type,
             name=cfg.name,
-            is_configured=bool(config_dict and config_dict.get("api_user") and config_dict.get("api_key")),
+            is_configured=_is_email_configured(config_dict, cfg.type),
             is_active=cfg.is_active,
             created_at=cfg.created_at,
             updated_at=cfg.updated_at,
@@ -87,7 +87,7 @@ async def list_notification_configs_for_debug(
     items = []
     for cfg in configs:
         config_dict = await NotificationConfigService.get_config_dict(cfg)
-        if config_dict and config_dict.get("api_user") and config_dict.get("api_key"):
+        if _is_email_configured(config_dict, cfg.type):
             items.append({"id": cfg.id, "type": cfg.type, "name": cfg.name})
 
     return ResponseModel.success_response(
@@ -140,28 +140,65 @@ async def get_notification_config(
     )
 
 
+def _is_email_configured(config: dict | None, config_type: str) -> bool:
+    """判断邮件配置是否完整（支持 SendCloud / SMTP）"""
+    if not config or config_type != "email":
+        return False
+    provider = (config.get("provider") or config.get("email_provider") or "").strip().lower()
+    if provider == "smtp" or (config.get("host") or config.get("smtp_host")):
+        return bool(
+            (config.get("host") or config.get("smtp_host"))
+            and (config.get("from_email") or config.get("from"))
+        )
+    # SendCloud 或默认
+    return bool(config.get("api_user") and config.get("api_key"))
+
+
 def _mask_config(config: dict, config_type: str) -> dict:
     """脱敏"""
     if not config:
         return {}
     masked = config.copy()
-    if config_type == "email" and "api_key" in masked and masked["api_key"]:
-        masked["api_key"] = "****" + masked["api_key"][-4:] if len(masked["api_key"]) > 4 else "****"
+    if config_type == "email":
+        if "api_key" in masked and masked["api_key"]:
+            masked["api_key"] = "****" + masked["api_key"][-4:] if len(masked["api_key"]) > 4 else "****"
+        if "password" in masked and masked["password"]:
+            masked["password"] = "****" + masked["password"][-4:] if len(masked["password"]) > 4 else "****"
     return masked
 
 
 class TestEmailBody(BaseModel):
     """测试邮件请求体（使用已保存配置）"""
     email_to: str = Field(..., description="收件人邮箱")
+    content_type: str = Field("html", description="测试内容格式：html | plain | file")
 
 
 class TestEmailWithConfigBody(BaseModel):
     """测试邮件请求体（使用传入的配置，用于编辑时未保存的数据）"""
-    api_user: str = Field(..., description="SendCloud API 用户")
-    api_key: str = Field(..., description="SendCloud API 密钥")
+    provider: str = Field("sendcloud", description="邮件服务类型：sendcloud | smtp")
+    # SendCloud
+    api_user: str = Field("", description="SendCloud API 用户")
+    api_key: str = Field("", description="SendCloud API 密钥")
+    # SMTP
+    host: str = Field("", description="SMTP 服务器地址")
+    port: int = Field(587, description="SMTP 端口")
+    username: str = Field("", description="SMTP 用户名")
+    password: str = Field("", description="SMTP 密码")
+    use_tls: bool = Field(True, description="是否使用 TLS")
+    # 通用
     from_email: str = Field(..., description="发件人邮箱")
     from_name: str = Field("", description="发件人名称")
     email_to: str = Field(..., description="收件人邮箱")
+    content_type: str = Field("html", description="测试内容格式：html | plain | file")
+
+
+def _get_test_email_content(content_type: str) -> tuple[str, str]:
+    """根据 content_type 返回测试邮件内容和类型"""
+    if content_type == "plain":
+        return "这是一封测试邮件（纯文本格式），表示您的邮件配置已正确。", "plain"
+    if content_type == "file":
+        return "这是测试邮件附件内容，表示您的邮件配置已正确。\n\n格式：纯文本附件", "file"
+    return "<p>这是一封测试邮件（HTML 格式），表示您的邮件配置已正确。</p>", "html"
 
 
 @router.post(
@@ -176,24 +213,44 @@ async def test_email_with_config(
     """使用传入的配置发送测试邮件（用于编辑时验证当前表单数据）"""
     from app.services.email_service import EmailService
 
-    config = {
-        "api_user": body.api_user.strip(),
-        "api_key": body.api_key.strip(),
-        "from_email": body.from_email.strip(),
-        "from_name": (body.from_name or "").strip(),
-    }
-    if not all([config["api_user"], config["api_key"], config["from_email"], body.email_to.strip()]):
-        raise HTTPException(status_code=400, detail="请填写 API User、API Key、发件人邮箱和收件人邮箱")
+    provider = (body.provider or "sendcloud").strip().lower()
+    if provider == "smtp":
+        config = {
+            "provider": "smtp",
+            "host": body.host.strip(),
+            "port": body.port,
+            "username": body.username.strip(),
+            "password": body.password.strip(),
+            "from_email": body.from_email.strip(),
+            "from_name": (body.from_name or "").strip(),
+            "use_tls": body.use_tls,
+        }
+        if not config["host"] or not config["from_email"] or not body.email_to.strip():
+            raise HTTPException(status_code=400, detail="SMTP 请填写服务器地址、发件人邮箱和收件人邮箱")
+    else:
+        config = {
+            "provider": "sendcloud",
+            "api_user": body.api_user.strip(),
+            "api_key": body.api_key.strip(),
+            "from_email": body.from_email.strip(),
+            "from_name": (body.from_name or "").strip(),
+        }
+        if not all([config["api_user"], config["api_key"], config["from_email"], body.email_to.strip()]):
+            raise HTTPException(status_code=400, detail="SendCloud 请填写 API User、API Key、发件人邮箱和收件人邮箱")
 
+    ct = (body.content_type or "html").strip().lower()
+    if ct not in ("html", "plain", "file"):
+        ct = "html"
+    _content, _ct = _get_test_email_content(ct)
     ok = await EmailService.send_email(
         config=config,
         to=body.email_to.strip(),
         subject="[LLM Chat] 测试邮件",
-        content="<p>这是一封测试邮件，表示您的 SendCloud 邮件配置已正确。</p>",
-        content_type="html",
+        content=_content,
+        content_type=_ct,
     )
     if not ok:
-        raise HTTPException(status_code=500, detail="邮件发送失败，请检查 SendCloud 配置或收件人地址")
+        raise HTTPException(status_code=500, detail="邮件发送失败，请检查配置或收件人地址")
     return ResponseModel.success_response(
         data={"message": "测试邮件已发送"},
         message="测试邮件已发送，请查收",
@@ -224,19 +281,23 @@ async def test_email_notification(
         raise HTTPException(status_code=400, detail="仅支持邮件类型配置的测试")
 
     config_dict = await NotificationConfigService.get_config_dict(cfg)
-    if not config_dict or not config_dict.get("api_user") or not config_dict.get("api_key"):
-        raise HTTPException(status_code=400, detail="请先完善 API User、API Key、发件人邮箱等配置")
+    if not _is_email_configured(config_dict, cfg.type):
+        raise HTTPException(status_code=400, detail="请先完善邮件配置（SendCloud 或 SMTP）")
 
     email_to = body.email_to.strip()
     if not email_to:
         raise HTTPException(status_code=400, detail="请提供收件人邮箱")
 
+    ct = (body.content_type or "html").strip().lower()
+    if ct not in ("html", "plain", "file"):
+        ct = "html"
+    _content, _ct = _get_test_email_content(ct)
     ok = await EmailService.send_email(
         config=config_dict,
         to=email_to,
         subject="[LLM Chat] 测试邮件",
-        content="<p>这是一封测试邮件，表示您的 SendCloud 邮件配置已正确。</p>",
-        content_type="html",
+        content=_content,
+        content_type=_ct,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="邮件发送失败，请检查 SendCloud 配置或收件人地址")

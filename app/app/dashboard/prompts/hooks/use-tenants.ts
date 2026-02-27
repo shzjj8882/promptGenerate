@@ -26,7 +26,7 @@ export function useTenants(initialTenants?: Tenant[]) {
       setTenantsError(null);
       const response = await getTenants({
         skip: 0,
-        limit: 1000,
+        limit: 500,
         include_deleted: false,
       });
       

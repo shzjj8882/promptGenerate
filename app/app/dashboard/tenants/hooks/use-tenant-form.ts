@@ -7,7 +7,7 @@ import { ApiError } from "@/lib/api/config";
 import { logger } from "@/lib/utils/logger";
 import { useFormDialog } from "@/hooks/use-form-dialog";
 
-type TenantFormData = {
+export type TenantFormData = {
   code_id: string;
   name: string;
   app_id?: string;
@@ -52,7 +52,7 @@ export function useTenantForm({ onTenantsChange }: UseTenantFormProps) {
     formState: { errors, isSubmitting },
     reset,
   } = useForm<TenantFormData>({
-    resolver: yupResolver(tenantSchema) as any,
+    resolver: yupResolver(tenantSchema),
   });
 
   // 打开创建对话框

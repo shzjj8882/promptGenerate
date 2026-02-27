@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import Image from "next/image";
 import { LANDING_BRAND } from "@/lib/landing-config";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 
@@ -8,9 +9,11 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       {/* 左侧背景区域 */}
       <div className="hidden w-1/2 bg-gradient-to-br from-zinc-900 to-zinc-800 lg:flex lg:flex-col lg:items-center lg:justify-center lg:p-12">
         <div className="max-w-md space-y-6 text-white">
-          <img
+          <Image
             src="/logo-prompthub.png"
             alt={LANDING_BRAND.name}
+            width={140}
+            height={48}
             className="h-12 w-auto invert mix-blend-lighten"
           />
           <p className="text-lg text-zinc-300">

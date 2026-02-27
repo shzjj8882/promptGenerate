@@ -1,14 +1,15 @@
 "use client";
 
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef } from "react";
 import { Button } from "@/components/ui/button";
 import { useHasMenuButtonPermission } from "@/lib/permissions";
 
-interface PermissionButtonProps {
+interface PermissionButtonProps
+  extends Omit<ComponentPropsWithoutRef<typeof Button>, "children"> {
   permission: string;
   children: ReactNode;
   fallback?: ReactNode;
-  [key: string]: any; // 允许传递其他 Button 组件的 props
 }
 
 /**

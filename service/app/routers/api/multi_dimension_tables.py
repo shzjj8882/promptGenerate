@@ -73,6 +73,8 @@ async def get_table_by_code(
 async def get_table_rows(
     table_code: str = Path(..., description="表格代码"),
     team_id: Optional[str] = Query(None, description="团队 ID（可选，优先使用认证信息中的 team_id）"),
+    skip: int = Query(0, ge=0, description="跳过行数，用于分页"),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="每页行数，不传则返回全部"),
     auth_team_id: Optional[str] = Depends(get_team_id_from_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -101,7 +103,7 @@ async def get_table_rows(
     if not final_team_id and table.team_id:
         final_team_id = table.team_id
     
-    # 查询行（使用 final_team_id）
+    # 查询行（使用 final_team_id，支持分页）
     if final_team_id:
         query = select(MultiDimensionTableRow).where(
             and_(
@@ -113,6 +115,9 @@ async def get_table_rows(
         query = select(MultiDimensionTableRow).where(
             MultiDimensionTableRow.table_id == table_id
         ).order_by(MultiDimensionTableRow.row_id)
+    
+    if limit is not None:
+        query = query.offset(skip).limit(limit)
     
     result = await db.execute(query)
     rows = result.scalars().all()
@@ -238,7 +243,8 @@ async def get_table_row_ids(
     
     # 获取最大 row_id
     max_row_id_result = await db.execute(max_row_id_query)
-    max_row_id = max_row_id_result.scalar_one() or -1
+    max_val = max_row_id_result.scalar_one()
+    max_row_id = -1 if max_val is None else max_val
     
     return ResponseModel.success_response(
         data={
@@ -316,7 +322,8 @@ async def create_table_row(
             )
         )
     max_row_id_result = await db.execute(max_row_id_query)
-    max_row_id = max_row_id_result.scalar_one() or -1
+    max_val = max_row_id_result.scalar_one()
+    max_row_id = -1 if max_val is None else max_val
     
     # 处理用户提供的 row_id
     if row_data.row_id is not None and row_data.row_id >= 0:
@@ -434,12 +441,9 @@ async def create_table_row(
     
     await db.commit()
     await db.refresh(new_row)
-    
-    # 返回创建的行数据
-    cells_query = select(MultiDimensionTableCell).where(MultiDimensionTableCell.row_id == new_row.id)
-    cells_result = await db.execute(cells_query)
-    cells = cells_result.scalars().all()
-    cells_dict = {cell.column_key: cell.value for cell in cells}
+
+    # 返回创建的行数据（优化：直接使用 final_cells，避免额外查询）
+    cells_dict = {k: v for k, v in final_cells.items() if k in column_keys}
     
     return ResponseModel.success_response(
         data={
@@ -642,42 +646,45 @@ async def update_table_row_by_condition(
                 detail="数据格式验证失败: " + "; ".join(validation_errors)
             )
     
-    # 更新所有匹配的行
+    # 更新所有匹配的行（优化：批量查询单元格，避免 N+1）
+    updated_row_ids_list = [r.id for r in rows]
+    cells_by_row_col: dict = {}
+    if update_request.cells:
+        cells_query = select(MultiDimensionTableCell).where(
+            and_(
+                MultiDimensionTableCell.row_id.in_(updated_row_ids_list),
+                MultiDimensionTableCell.column_key.in_(list(update_request.cells.keys())),
+            )
+        )
+        cells_result = await db.execute(cells_query)
+        for cell in cells_result.scalars().all():
+            key = (cell.row_id, cell.column_key)
+            cells_by_row_col[key] = cell
+
     updated_count = 0
     updated_row_ids = []
     for row in rows:
         if update_request.row_data is not None:
             row.row_data = json.dumps(update_request.row_data, ensure_ascii=False)
-        
+
         if update_request.cells:
             for column_key, value in update_request.cells.items():
                 if column_key not in column_keys:
                     continue
-                
-                cell_result = await db.execute(
-                    select(MultiDimensionTableCell).where(
-                        and_(
-                            MultiDimensionTableCell.row_id == row.id,
-                            MultiDimensionTableCell.column_key == column_key,
-                        )
-                    )
-                )
-                cell = cell_result.scalar_one_or_none()
-                
+                cell = cells_by_row_col.get((row.id, column_key))
                 if cell:
                     cell.value = value
                 else:
-                    cell = MultiDimensionTableCell(
+                    db.add(MultiDimensionTableCell(
                         table_id=table_id,
                         row_id=row.id,
                         column_key=column_key,
                         value=value,
-                    )
-                    db.add(cell)
-        
+                    ))
+
         updated_row_ids.append(row.id)
         updated_count += 1
-    
+
     await db.commit()
     
     return ResponseModel.success_response(
@@ -848,35 +855,31 @@ async def update_table_row(
     if row_data.row_data is not None:
         row.row_data = json.dumps(row_data.row_data, ensure_ascii=False)
     
-    # 更新单元格
+    # 更新单元格（优化：批量查询后更新，避免 N+1）
     if row_data.cells is not None:
         columns = json.loads(table.columns) if table.columns else []
         column_keys = [col["key"] for col in columns]
-        
-        for column_key, value in row_data.cells.items():
-            if column_key not in column_keys:
-                continue
-            
-            cell_result = await db.execute(
-                select(MultiDimensionTableCell).where(
-                    and_(
-                        MultiDimensionTableCell.row_id == row_id,
-                        MultiDimensionTableCell.column_key == column_key,
-                    )
+        cells_to_update = {k: v for k, v in row_data.cells.items() if k in column_keys}
+        if cells_to_update:
+            cells_query = select(MultiDimensionTableCell).where(
+                and_(
+                    MultiDimensionTableCell.row_id == row_id,
+                    MultiDimensionTableCell.column_key.in_(list(cells_to_update.keys())),
                 )
             )
-            cell = cell_result.scalar_one_or_none()
-            
-            if cell:
-                cell.value = value
-            else:
-                cell = MultiDimensionTableCell(
-                    table_id=table_id,
-                    row_id=row_id,
-                    column_key=column_key,
-                    value=value,
-                )
-                db.add(cell)
+            cells_result = await db.execute(cells_query)
+            cells_map = {c.column_key: c for c in cells_result.scalars().all()}
+            for column_key, value in cells_to_update.items():
+                cell = cells_map.get(column_key)
+                if cell:
+                    cell.value = value
+                else:
+                    db.add(MultiDimensionTableCell(
+                        table_id=table_id,
+                        row_id=row_id,
+                        column_key=column_key,
+                        value=value,
+                    ))
     
     await db.commit()
     await db.refresh(row)

@@ -29,6 +29,9 @@ def _register_routes():
     
     from app.routers.api.llmchat import router as llmchat_router
     router.include_router(llmchat_router)
+
+    from app.routers.api.compositions_api import router as compositions_api_router
+    router.include_router(compositions_api_router)
     
     from app.routers.api.multi_dimension_tables import router as multi_dimension_tables_router
     router.include_router(multi_dimension_tables_router)

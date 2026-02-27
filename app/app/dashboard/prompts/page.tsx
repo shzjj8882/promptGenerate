@@ -22,7 +22,7 @@ export default async function PromptsPage() {
   try {
     // 默认首屏：场景为 all，租户为 default => is_default = true
     const [tenantsResponse, promptResponse] = await Promise.all([
-      getTenantsOnServer({ skip: 0, limit: 1000, include_deleted: false }),
+      getTenantsOnServer({ skip: 0, limit: 500, include_deleted: false }),
       getPromptsOnServer({ is_default: true }),
     ]);
 

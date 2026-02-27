@@ -161,12 +161,24 @@ interface DashboardNavProps {
 
 /** 仅客户端渲染的侧栏导航，由 layout 通过 dynamic(ssr:false) 引入，避免 hydration 不匹配 */
 const DashboardNavImpl = ({ collapsedOverride }: DashboardNavProps = {}) => {
+  const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
   const collapsed = collapsedOverride ?? uiStore.sidebarCollapsed;
   // 直接从 store 读取菜单树（MobX 会自动响应式更新）
   const rawMenuTree = userStore.menuTree;
   const menuTree = filterMenuTreeByBackendPermission(rawMenuTree, userStore.user);
   const loading = userStore.menuTreeLoading || (!userStore.user && rawMenuTree.length === 0);
+
+  useEffect(() => setMounted(true), []);
+
+  // 挂载前统一渲染占位，避免服务端与客户端 store 状态不同导致 hydration 不匹配
+  if (!mounted) {
+    return (
+      <nav className="mt-2 space-y-1 px-2 text-sm" aria-label="主导航">
+        <div className="px-3 py-2 text-xs text-zinc-400">加载中...</div>
+      </nav>
+    );
+  }
 
   if (loading) {
     return (

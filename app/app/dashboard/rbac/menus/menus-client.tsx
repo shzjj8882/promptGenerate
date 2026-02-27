@@ -80,7 +80,7 @@ function MenusClientImpl(props: MenusClientProps) {
 
   const fetchAllMenus = useCallback(async () => {
     try {
-      const response = await getPermissions({ type: "menu", is_active: true, limit: 1000 });
+      const response = await getPermissions({ type: "menu", is_active: true, limit: 500 });
       setAllMenus(response.items);
     } catch (err) {
       handleError(err, "获取菜单列表失败");

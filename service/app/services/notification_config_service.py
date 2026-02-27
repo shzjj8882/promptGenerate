@@ -25,7 +25,7 @@ class NotificationConfigService:
 
     @staticmethod
     async def get_by_type(db: AsyncSession, config_type: str, team_id: Optional[str] = None) -> Optional[NotificationConfig]:
-        """根据类型获取配置（优先团队，其次全局）"""
+        """根据类型获取配置（优先团队，其次全局 team_id=NULL，最后任意一条）"""
         if team_id:
             result = await db.execute(
                 select(NotificationConfig)
@@ -37,6 +37,13 @@ class NotificationConfigService:
         result = await db.execute(
             select(NotificationConfig)
             .where(and_(NotificationConfig.type == config_type, NotificationConfig.team_id.is_(None)))
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg:
+            return cfg
+        # 若全局配置不存在，取任意一条该类型的配置（兼容仅配置了团队级邮件的情况）
+        result = await db.execute(
+            select(NotificationConfig).where(NotificationConfig.type == config_type).limit(1)
         )
         return result.scalar_one_or_none()
 

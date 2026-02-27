@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Plus, X, Trash2, MoreVertical, Pencil, ChevronDownIcon, Undo2, Redo2, Save, Upload, Filter } from "lucide-react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { Plus, X, Trash2, MoreVertical, Pencil, ChevronDownIcon, Undo2, Redo2, Save, Upload, Filter, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,17 +14,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { ResponsiveMenu } from "@/components/ui/responsive-menu";
+import { ResponsivePopover } from "@/components/ui/responsive-popover";
 import {
   Dialog,
   DialogContent,
@@ -35,18 +26,34 @@ import {
 } from "@/components/ui/dialog";
 import { DatePicker, DATE_FORMATS } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/components/shared/theme-provider";
+import {
+  createCanvasGridRenderer,
+  type GridColumn,
+  type GridRow,
+  type CanvasGridRendererInstance,
+} from "@/lib/canvas-grid-renderer";
 import type { MultiDimensionTable, TableRow as TableRowType } from "@/lib/api/multi-dimension-tables";
+import { filterNonDeletedRows } from "@/lib/utils/table-rows";
+import { generateKeyFromLabel, normalize } from "@/lib/utils/string";
+import { parseExcelFile, ExcelParseError } from "@/lib/utils/excel-parser";
 
 interface CanvasSpreadsheetTableViewProps {
   table: MultiDimensionTable;
   rows: TableRowType[];
   loading?: boolean;
+  /** 表头吸顶：为 true 时垂直滚动时表头固定在顶部 */
+  stickyHeader?: boolean;
   onCellChange: (rowId: string, columnKey: string, value: string) => void;
   onAddRow: () => void;
   onAddColumn?: () => void;
   onDeleteColumn: (columnKey: string) => void;
   onEditColumn: (columnKey: string) => void;
+  onEditRow?: (row: TableRowType) => void;
   onDeleteRow?: (row: TableRowType) => void;
+  onEditByCondition?: () => void;
+  onDeleteByCondition?: () => void;
+  onQueryByCondition?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -58,383 +65,69 @@ interface CanvasSpreadsheetTableViewProps {
   onImportColumns?: (columns: Array<{ key: string; label: string; type?: string; defaultValue?: string }>, mode?: "append" | "replace") => void;
 }
 
-// 渲染配置常量
-const CELL_HEIGHT = 40; // 每行高度
-const HEADER_HEIGHT = 40; // 表头高度
-const ID_COLUMN_KEY = "__id__"; // ID列的 key
-const DEFAULT_COLUMN_WIDTH = 150; // 默认列宽
-const DEFAULT_ID_COLUMN_WIDTH = 120; // ID列默认宽度
-const TILE_SIZE = 512; // 瓦片大小（像素）
+// 渲染配置常量（业务层使用）
+const CELL_HEIGHT = 40;
+const HEADER_HEIGHT = 40;
+const ID_COLUMN_KEY = "__id__";
+const DEFAULT_COLUMN_WIDTH = 150;
+const DEFAULT_ID_COLUMN_WIDTH = 120;
 
-// 瓦片缓存接口
-interface Tile {
-  canvas: HTMLCanvasElement;
-  rowStart: number;
-  rowEnd: number;
-  colStart: number;
-  colEnd: number;
-  lastUsed: number;
+/** 多维表格业务：格式化单元格显示值 */
+function formatTableCellValue(value: string, columnType?: string): string {
+  if (!value) return "";
+  if (columnType === "date") return value;
+  if (columnType === "multi_select") {
+    return [...new Set(value.split(/[,\s]+/).map((v) => v.trim()).filter((v) => v))].join(", ");
+  }
+  return value;
 }
 
-// Canvas 渲染引擎类
-class CanvasTableRenderer {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private devicePixelRatio: number;
-  
-  // 表格配置
-  private table: MultiDimensionTable;
-  private rows: TableRowType[];
-  private columnWidths: Record<string, number>;
-  
-  // 渲染状态
-  private scrollX: number = 0;
-  private scrollY: number = 0;
-  private viewportWidth: number = 0;
-  private viewportHeight: number = 0;
-  
-  // 瓦片缓存
-  private tileCache: Map<string, Tile> = new Map();
-  private maxCacheSize: number = 50; // 最大缓存瓦片数
-  
-  // 样式配置
-  private styles = {
-    headerBg: "#f5f5f5",
-    cellBg: "#ffffff",
-    selectedBg: "#e3f2fd",
-    borderColor: "#e0e0e0",
-    headerText: "#333333",
-    cellText: "#000000",
-    headerFont: "14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    cellFont: "13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  };
-  
-  constructor(canvas: HTMLCanvasElement, table: MultiDimensionTable, rows: TableRowType[], columnWidths: Record<string, number>) {
-    this.canvas = canvas;
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (!ctx) {
-      throw new Error("无法获取 Canvas 渲染上下文");
-    }
-    this.ctx = ctx;
-    this.table = table;
-    this.rows = rows;
-    this.columnWidths = columnWidths;
-    
-    // 处理高DPI屏幕
-    this.devicePixelRatio = window.devicePixelRatio || 1;
-    this.resizeCanvas();
-  }
-  
-  resizeCanvas() {
-    const rect = this.canvas.getBoundingClientRect();
-    this.viewportWidth = rect.width;
-    this.viewportHeight = rect.height;
-    
-    // 设置实际画布大小（考虑设备像素比）
-    this.canvas.width = this.viewportWidth * this.devicePixelRatio;
-    this.canvas.height = this.viewportHeight * this.devicePixelRatio;
-    
-    // 重置变换矩阵，然后缩放上下文以匹配设备像素比
-    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.ctx.scale(this.devicePixelRatio, this.devicePixelRatio);
-    
-    // 设置文字渲染质量
-    this.ctx.textBaseline = "middle";
-    this.ctx.textAlign = "left";
-    
-    // 清除缓存，因为画布大小改变了
-    this.tileCache.clear();
-  }
-  
-  setScroll(x: number, y: number) {
-    this.scrollX = x;
-    this.scrollY = y;
-  }
-  
-  setColumnWidths(widths: Record<string, number>) {
-    this.columnWidths = widths;
-    this.tileCache.clear(); // 清除缓存
-  }
-  
-  // 获取 ID 列宽度
-  private getIdColumnWidth(): number {
-    return this.columnWidths[ID_COLUMN_KEY] || DEFAULT_ID_COLUMN_WIDTH;
-  }
-  
-  updateData(table: MultiDimensionTable, rows: TableRowType[]) {
-    this.table = table;
-    this.rows = rows;
-    this.tileCache.clear(); // 清除缓存
-  }
-  
-  // 获取可见区域的行和列范围
-  // 绘制单个单元格
-  private drawCell(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    value: string,
-    isHeader: boolean = false,
-    isSelected: boolean = false
-  ) {
-    // 背景色
-    if (isHeader) {
-      ctx.fillStyle = this.styles.headerBg;
-    } else if (isSelected) {
-      ctx.fillStyle = this.styles.selectedBg;
-    } else {
-      ctx.fillStyle = this.styles.cellBg;
-    }
-    ctx.fillRect(x, y, width, height);
-    
-    // 边框
-    ctx.strokeStyle = this.styles.borderColor;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, width, height);
-    
-    // 文字
-    if (value && width > 0) {
-      // 确保字体设置正确（每次绘制前重新设置，避免状态污染）
-      ctx.fillStyle = isHeader ? this.styles.headerText : this.styles.cellText;
-      ctx.font = isHeader ? this.styles.headerFont : this.styles.cellFont;
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "left";
-      
-      // 文本裁剪 - 确保使用当前列宽
-      const padding = 8;
-      const textX = x + padding;
-      const textY = y + height / 2;
-      const maxWidth = Math.max(0, width - padding * 2); // 确保不为负
-      
-      if (maxWidth > 0) {
-        // 先测量完整文本
-        const metrics = ctx.measureText(value);
-        
-        if (metrics.width > maxWidth) {
-          // 文本过长，需要截断
-          let truncated = value;
-          const ellipsis = "...";
-          const ellipsisWidth = ctx.measureText(ellipsis).width;
-          const maxTextWidth = maxWidth - ellipsisWidth;
-          
-          // 二分查找最优截断点
-          if (maxTextWidth > 0) {
-            let low = 0;
-            let high = truncated.length;
-            let bestFit = 0;
-            
-            while (low <= high) {
-              const mid = Math.floor((low + high) / 2);
-              const testText = truncated.substring(0, mid);
-              const testWidth = ctx.measureText(testText).width;
-              
-              if (testWidth <= maxTextWidth) {
-                bestFit = mid;
-                low = mid + 1;
-              } else {
-                high = mid - 1;
-              }
-            }
-            
-            truncated = truncated.substring(0, bestFit);
-          } else {
-            truncated = "";
-          }
-          
-          ctx.fillText(truncated + ellipsis, textX, textY);
-        } else {
-          // 文本可以完整显示
-          ctx.fillText(value, textX, textY);
-        }
-      }
-    }
-  }
-  
-  // 清理旧的缓存瓦片
-  private cleanupTileCache() {
-    if (this.tileCache.size <= this.maxCacheSize) return;
-    
-    // 按最后使用时间排序，删除最旧的
-    const tiles = Array.from(this.tileCache.entries())
-      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    
-    const toRemove = tiles.slice(0, tiles.length - this.maxCacheSize);
-    toRemove.forEach(([key]) => this.tileCache.delete(key));
-  }
-  
-  // 渲染可见区域（直接渲染，不使用瓦片缓存）
-  render() {
-    const ctx = this.ctx;
-    
-    // 重置变换矩阵，确保缩放正确
-    // 先重置为单位矩阵，再应用设备像素比缩放
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(this.devicePixelRatio, this.devicePixelRatio);
-    
-    // 清除画布（使用逻辑坐标，不是物理像素坐标）
-    ctx.clearRect(0, 0, this.viewportWidth, this.viewportHeight);
-    
-    // 绘制背景
-    ctx.fillStyle = this.styles.cellBg;
-    ctx.fillRect(0, 0, this.viewportWidth, this.viewportHeight);
-    
-    // 绘制表头
-    // ID列头 - 使用与其他列一致的坐标计算方式
-    const idColumnWidth = this.getIdColumnWidth();
-    const idHeaderX = -this.scrollX;
-    if (idHeaderX + idColumnWidth > 0 && idHeaderX < this.viewportWidth) {
-      // 确保绘制位置不为负（当 scrollX > 0 时）
-      const actualX = Math.max(0, idHeaderX);
-      const actualWidth = idHeaderX < 0 ? idColumnWidth + idHeaderX : idColumnWidth;
-      if (actualWidth > 0) {
-        this.drawCell(ctx, actualX, 0, actualWidth, HEADER_HEIGHT, "ID", true);
-      }
-    }
-    
-    // 其他列头 - 直接遍历所有列，在绘制时检查可见性
-    let colX = idColumnWidth - this.scrollX;
-    for (let colIdx = 0; colIdx < this.table.columns.length; colIdx++) {
-      const col = this.table.columns[colIdx];
-      const width = this.columnWidths[col.key] || DEFAULT_COLUMN_WIDTH;
-      
-      if (colX + width > 0 && colX < this.viewportWidth) {
-        this.drawCell(ctx, colX, 0, width, HEADER_HEIGHT, col.label, true);
-      }
-      colX += width;
-    }
-    
-    // 绘制数据行 - 直接遍历所有行，在绘制时检查可见性
-    for (let rowIdx = 0; rowIdx < this.rows.length; rowIdx++) {
-      const row = this.rows[rowIdx];
-      const rowY = HEADER_HEIGHT + (rowIdx * CELL_HEIGHT) - this.scrollY;
-      
-      // 跳过完全不可见的行（性能优化：只绘制可见区域）
-      // 注意：这是虚拟化渲染，如果移除这个检查会渲染所有行，影响性能
-      if (rowY + CELL_HEIGHT < 0 || rowY > this.viewportHeight) continue;
-      
-      // ID单元格 - 使用与其他列一致的坐标计算方式
-      const idColumnWidth = this.getIdColumnWidth();
-      const idCellX = -this.scrollX;
-      if (idCellX + idColumnWidth > 0 && idCellX < this.viewportWidth) {
-        // 确保绘制位置不为负（当 scrollX > 0 时）
-        const actualX = Math.max(0, idCellX);
-        const actualWidth = idCellX < 0 ? idColumnWidth + idCellX : idColumnWidth;
-        if (actualWidth > 0) {
-          this.drawCell(ctx, actualX, rowY, actualWidth, CELL_HEIGHT, String(row.row_id), false);
-        }
-      }
-      
-      // 数据单元格 - 直接遍历所有列，在绘制时检查可见性
-      colX = idColumnWidth - this.scrollX;
-      for (let colIdx = 0; colIdx < this.table.columns.length; colIdx++) {
-        const col = this.table.columns[colIdx];
-        const width = this.columnWidths[col.key] || DEFAULT_COLUMN_WIDTH;
-        
-        if (colX + width > 0 && colX < this.viewportWidth) {
-          const value = this.formatCellValue(row.cells[col.key] || "", col);
-          this.drawCell(ctx, colX, rowY, width, CELL_HEIGHT, value, false);
-        }
-        colX += width;
-      }
-    }
-    
-    // 清理缓存
-    this.cleanupTileCache();
-  }
-  
-  // 格式化单元格值
-  private formatCellValue(value: string, col: typeof this.table.columns[0]): string {
-    if (!value) return "";
-    
-    const columnType = col.type || "text";
-    
-    switch (columnType) {
-      case "date":
-        return value;
-      case "multi_select":
-        return value.split(",").filter(v => v).join(", ");
-      default:
-        return value;
-    }
-  }
-  
-  // 根据坐标获取单元格位置
-  getCellAt(x: number, y: number): { rowIndex: number; colKey: string | null } | null {
-    if (y < HEADER_HEIGHT) {
-      return null; // 表头区域
-    }
-    
-    const rowIndex = Math.floor((y - HEADER_HEIGHT + this.scrollY) / CELL_HEIGHT);
-    if (rowIndex < 0 || rowIndex >= this.rows.length) {
-      return null;
-    }
-    
-    // 检查是否点击在ID列
-    const idColumnWidth = this.getIdColumnWidth();
-    const adjustedX = x + this.scrollX;
-    if (adjustedX >= 0 && adjustedX < idColumnWidth) {
-      return { rowIndex, colKey: null }; // ID列
-    }
-    
-    // 查找数据列
-    let colX = idColumnWidth;
-    for (const col of this.table.columns) {
-      const width = this.columnWidths[col.key] || DEFAULT_COLUMN_WIDTH;
-      if (adjustedX >= colX && adjustedX < colX + width) {
-        return { rowIndex, colKey: col.key };
-      }
-      colX += width;
-    }
-    
-    return null;
-  }
-  
-  // 获取单元格的屏幕坐标
-  getCellRect(rowIndex: number, colKey: string | null): { x: number; y: number; width: number; height: number } | null {
-    if (rowIndex < 0 || rowIndex >= this.rows.length) {
-      return null;
-    }
-    
-    const idColumnWidth = this.getIdColumnWidth();
-    let x = 0;
-    let width = idColumnWidth;
-    
-    if (colKey) {
-      x = idColumnWidth;
-      for (const col of this.table.columns) {
-        const colWidth = this.columnWidths[col.key] || DEFAULT_COLUMN_WIDTH;
-        if (col.key === colKey) {
-          width = colWidth;
-          break;
-        }
-        x += colWidth;
-      }
-    }
-    
-    const y = HEADER_HEIGHT + (rowIndex * CELL_HEIGHT) - this.scrollY;
-    const height = CELL_HEIGHT;
-    
-    return { 
-      x: x - this.scrollX, 
-      y: y, 
-      width, 
-      height 
-    };
-  }
+/** 将业务数据适配为渲染器所需的 GridColumn[] */
+function toGridColumns(table: MultiDimensionTable, columnWidths: Record<string, number>): GridColumn[] {
+  return (table?.columns || []).map((col) => ({
+    key: col.key,
+    width: columnWidths[col.key] ?? DEFAULT_COLUMN_WIDTH,
+    headerLabel: col.label,
+  }));
 }
+
+/** 将业务数据适配为渲染器所需的 GridRow[]（业务格式化在适配层完成） */
+function toGridRows(rows: TableRowType[], table: MultiDimensionTable): GridRow[] {
+  const colTypes = Object.fromEntries((table?.columns || []).map((c) => [c.key, c.type]));
+  return rows.map((row) => ({
+    getCellValue: (columnKey: string) =>
+      formatTableCellValue(row.cells[columnKey] ?? "", colTypes[columnKey]),
+    getRowId: () => row.row_id,
+  }));
+}
+
+/** 创建 React 场景的渲染器配置（柯里化 + Tailwind 主题） */
+const getSpreadsheetRendererConfig = (themeElement: () => HTMLElement | null) =>
+  createCanvasGridRenderer({
+    cellHeight: CELL_HEIGHT,
+    headerHeight: HEADER_HEIGHT,
+    idColumnKey: ID_COLUMN_KEY,
+    idColumnWidth: DEFAULT_ID_COLUMN_WIDTH,
+    defaultColumnWidth: DEFAULT_COLUMN_WIDTH,
+    formatCellValue: (v) => v,
+    useTailwindTheme: () => themeElement() ?? document.documentElement,
+  });
 
 export function CanvasSpreadsheetTableView({
   table,
   rows,
   loading = false,
+  stickyHeader = false,
   onCellChange,
   onAddRow,
   onAddColumn,
   onDeleteColumn,
   onEditColumn,
+  onEditRow,
   onDeleteRow,
+  onEditByCondition,
+  onDeleteByCondition,
+  onQueryByCondition,
   onUndo,
   onRedo,
   canUndo = false,
@@ -446,9 +139,27 @@ export function CanvasSpreadsheetTableView({
   onImportColumns,
 }: CanvasSpreadsheetTableViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const headerCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<CanvasTableRenderer | null>(null);
-  
+  const rendererRef = useRef<CanvasGridRendererInstance | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const { theme } = useTheme();
+
+  const doRender = useCallback(() => {
+    if (!rendererRef.current) return;
+    if (stickyHeader) {
+      rendererRef.current.render({ skipHeader: true });
+      if (headerCanvasRef.current) rendererRef.current.renderHeader(headerCanvasRef.current);
+    } else {
+      rendererRef.current.render();
+    }
+  }, [stickyHeader]);
+
+  const createSpreadsheetRenderer = useMemo(
+    () => getSpreadsheetRendererConfig(() => containerRef.current),
+    []
+  );
+
   // 键盘快捷键支持
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -478,6 +189,35 @@ export function CanvasSpreadsheetTableView({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [canUndo, canRedo, onUndo, onRedo]);
+
+  // 监听主题变化，重绘 canvas 以应用新的 CSS 变量颜色
+  useEffect(() => {
+    doRender();
+  }, [theme, doRender]);
+
+  // 当 theme 为 system 时，监听系统主题偏好变化
+  useEffect(() => {
+    if (theme !== "system") return;
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => doRender();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme, doRender]);
+
+  // 监听 document 根节点 class 变化（主题实际应用时机），确保 DOM 更新后再重绘
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.attributeName === "class") {
+          doRender();
+          break;
+        }
+      }
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, [doRender]);
   
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnKey: string } | null>(null);
   const [cellValue, setCellValue] = useState<string>("");
@@ -509,6 +249,9 @@ export function CanvasSpreadsheetTableView({
   const [isDragging, setIsDragging] = useState(false);
   const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null);
   const [hoveredColumnKey, setHoveredColumnKey] = useState<string | null>(null);
+  const [conditionMenuOpen, setConditionMenuOpen] = useState(false);
+  const [columnMenuOpen, setColumnMenuOpen] = useState<string | null>(null);
+  const [rowMenuOpen, setRowMenuOpen] = useState<number | null>(null);
   
   // 筛选相关状态
   type FilterOperator = "contains" | "equals" | "not_contains" | "not_equals" | "starts_with" | "ends_with";
@@ -573,162 +316,108 @@ export function CanvasSpreadsheetTableView({
   }, [checkGroup]);
 
   const filteredRows = useMemo(() => {
-    // 先过滤掉已标记删除的行，再应用筛选条件
-    return rows
-      .filter(row => !(row as any)._deleted)
-      .filter(row => applyFilter(row, filterGroups));
+    return filterNonDeletedRows(rows).filter((row) =>
+      applyFilter(row, filterGroups)
+    );
   }, [rows, filterGroups, applyFilter]);
 
-  // 初始化渲染器
+  const gridColumns = useMemo(
+    () => (table && columnWidths ? toGridColumns(table, columnWidths) : []),
+    [table?.id, table?.columns, columnWidths]
+  );
+  const gridRows = useMemo(
+    () => (table && filteredRows ? toGridRows(filteredRows, table) : []),
+    [table?.id, table?.columns, filteredRows]
+  );
+
+  // 初始化渲染器（需要 canvas 和 container 都就绪）
   useEffect(() => {
-    if (canvasRef.current && table && filteredRows.length >= 0) {
+    if (canvasRef.current && containerRef.current && table && filteredRows.length >= 0) {
       try {
-        rendererRef.current = new CanvasTableRenderer(
-          canvasRef.current,
-          table,
-          filteredRows,
-          columnWidths
-        );
-        rendererRef.current.render();
+        rendererRef.current = createSpreadsheetRenderer(canvasRef.current, containerRef.current);
+        rendererRef.current.updateData(gridColumns, gridRows, columnWidths);
+        doRender();
       } catch (error) {
         console.error("Canvas 渲染器初始化失败:", error);
       }
     }
-  }, [table?.id, table?.columns, filteredRows.length, columnWidths]);
+  }, [table?.id, table?.columns?.length, filteredRows.length, columnWidths, gridColumns, gridRows, createSpreadsheetRenderer]);
 
-  // 解析 Excel 文件
-  const parseExcelFile = useCallback(async (file: File) => {
-    try {
-      const XLSX = await import("xlsx");
-      const reader = new FileReader();
-      
-      reader.onload = (event) => {
-        try {
-          const data = new Uint8Array(event.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
-            header: 1,
-            defval: ""
-          }) as any[][];
-          
-          if (jsonData.length < 2) {
-            setErrorMessage("Excel 文件至少需要包含标题行和一行数据");
-            setErrorDialogOpen(true);
-            return;
-          }
-          
-          const headers = (jsonData[0] as any[])?.filter(h => h !== null && h !== undefined && String(h).trim() !== "") || [];
-          if (headers.length === 0) {
-            setErrorMessage("Excel 文件的第一行（标题行）为空，请检查文件格式");
-            setErrorDialogOpen(true);
-            return;
-          }
-          
-          // 保存 Excel 数据
-          setExcelHeaders(headers.map(h => String(h).trim()));
-          setExcelData(jsonData.slice(1));
-          
-          // 判断表格状态
-          const isNewTable = rows.length === 0 && table.columns.length === 0;
-          
-          if (isNewTable) {
-            // 情况1：新表格，显示列定义对话框
-            const generateKeyFromLabel = (label: string, existingKeys: Set<string>): string => {
-              let key = label.trim();
-              if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key) && !existingKeys.has(key)) {
-                return key;
-              }
-              key = key.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').toLowerCase();
-              if (!key || !/^[a-zA-Z_]/.test(key)) {
-                key = 'col_' + key;
-              }
-              let finalKey = key;
-              let counter = 1;
-              while (existingKeys.has(finalKey)) {
-                finalKey = `${key}_${counter}`;
-                counter++;
-              }
-              return finalKey;
+  // 解析 Excel 文件并处理导入流程
+  const handleParseExcel = useCallback(
+    async (file: File) => {
+      try {
+        const { headers, data } = await parseExcelFile(file);
+        setExcelHeaders(headers);
+        setExcelData(data);
+
+        const isNewTable = rows.length === 0 && table.columns.length === 0;
+
+        if (isNewTable) {
+          const existingKeys = new Set<string>();
+          const mappings = headers.map((header) => {
+            const headerStr = String(header).trim();
+            const key = generateKeyFromLabel(headerStr, existingKeys);
+            existingKeys.add(key);
+            return {
+              excelHeader: headerStr,
+              key,
+              label: headerStr,
+              type: "text",
+              defaultValue: "",
             };
-            
-            const existingKeys = new Set<string>();
-            const mappings = headers.map(header => {
-              const headerStr = String(header).trim();
-              const key = generateKeyFromLabel(headerStr, existingKeys);
-              existingKeys.add(key);
-              return {
-                excelHeader: headerStr,
-                key: key,
-                label: headerStr,
-                type: "text",
-                defaultValue: "",
-              };
-            });
-            setColumnMappings(mappings);
-            setColumnMappingDialogOpen(true);
+          });
+          setColumnMappings(mappings);
+          setColumnMappingDialogOpen(true);
+          setImportDialogOpen(false);
+        } else {
+          const excelKeys = headers.map((h) => {
+            const headerStr = String(h).trim();
+            for (const col of table.columns) {
+              const normalizedHeader = normalize(headerStr);
+              const normalizedLabel = normalize(col.label);
+              const normalizedKey = normalize(col.key);
+              if (
+                headerStr === col.label ||
+                headerStr === col.key ||
+                normalizedHeader === normalizedLabel ||
+                normalizedHeader === normalizedKey
+              ) {
+                return col.key;
+              }
+            }
+            return null;
+          });
+
+          const allMatched =
+            excelKeys.every((key) => key !== null) &&
+            excelKeys.length === table.columns.length;
+
+          if (allMatched) {
+            setImportModeDialogOpen(true);
             setImportDialogOpen(false);
           } else {
-            // 情况2：已有表格，检查列是否一致
-            const normalize = (str: string | null | undefined): string => {
-              if (!str) return "";
-              return String(str).trim().toLowerCase();
-            };
-            
-            const excelHeaderSet = new Set(headers.map(h => normalize(String(h))));
-            const tableColumnSet = new Set(table.columns.map(col => normalize(col.key)));
-            
-            // 检查列是否一致（比较 key）
-            const excelKeys = headers.map(h => {
-              const headerStr = String(h).trim();
-              for (const col of table.columns) {
-                const normalizedHeader = normalize(headerStr);
-                const normalizedLabel = normalize(col.label);
-                const normalizedKey = normalize(col.key);
-                if (
-                  headerStr === col.label ||
-                  headerStr === col.key ||
-                  normalizedHeader === normalizedLabel ||
-                  normalizedHeader === normalizedKey
-                ) {
-                  return col.key;
-                }
-              }
-              return null;
-            });
-            
-            const allMatched = excelKeys.every(key => key !== null) && excelKeys.length === table.columns.length;
-            
-            if (allMatched) {
-              // 列一致，询问覆盖还是追加
-              setImportModeDialogOpen(true);
-              setImportDialogOpen(false);
-            } else {
-              // 列不一致，只能覆盖 - 显示确认对话框
-              setColumnMismatchDialogOpen(true);
-              setImportDialogOpen(false);
-            }
+            setColumnMismatchDialogOpen(true);
+            setImportDialogOpen(false);
           }
-        } catch (error) {
-          console.error("解析 Excel 文件失败:", error);
-          setErrorMessage("解析 Excel 文件失败，请检查文件格式");
-          setErrorDialogOpen(true);
         }
-      };
-      
-      reader.onerror = () => {
-        setErrorMessage("读取文件失败");
+      } catch (err) {
+        const msg =
+          err instanceof ExcelParseError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "解析 Excel 文件失败，请检查文件格式";
+        if (msg.includes("xlsx")) {
+          setErrorMessage("请先安装 xlsx 库：pnpm add xlsx");
+        } else {
+          setErrorMessage(msg);
+        }
         setErrorDialogOpen(true);
-      };
-      
-      reader.readAsArrayBuffer(file);
-    } catch (error) {
-      console.error("导入 xlsx 库失败:", error);
-      setErrorMessage("请先安装 xlsx 库：pnpm add xlsx");
-      setErrorDialogOpen(true);
-    }
-  }, [table, rows]);
+      }
+    },
+    [table, rows]
+  );
   
   // 执行导入
   const executeImport = useCallback((mappings: Array<{ excelHeader: string; key: string; label: string; type: string; defaultValue: string }>, mode: "append" | "replace") => {
@@ -844,36 +533,34 @@ export function CanvasSpreadsheetTableView({
   }, [excelData, excelHeaders, table, rows, onImportRows, onImportColumns]);
   
   // Excel 导入功能（文件选择后调用）
-  const handleFileImport = useCallback(async (file: File) => {
-    await parseExcelFile(file);
-  }, [parseExcelFile]);
+  const handleFileImport = useCallback(
+    async (file: File) => {
+      await handleParseExcel(file);
+    },
+    [handleParseExcel]
+  );
 
-  // 更新数据和滚动位置（使用筛选后的行）
-  useEffect(() => {
-    if (rendererRef.current && table && filteredRows) {
-      rendererRef.current.updateData(table, filteredRows);
-      rendererRef.current.setColumnWidths(columnWidths);
-      rendererRef.current.setScroll(scrollX, scrollY);
-      rendererRef.current.render();
+  // 更新数据和重绘（渲染器内部从 DOM 读取滚动位置）
+  useLayoutEffect(() => {
+    if (rendererRef.current && gridColumns.length >= 0 && containerRef.current) {
+      rendererRef.current.updateData(gridColumns, gridRows, columnWidths);
+      doRender();
     }
-  }, [table, table?.columns?.length, filteredRows, scrollX, scrollY, columnWidths]);
+  }, [table?.id, table?.columns?.length, filteredRows, scrollX, scrollY, columnWidths, gridColumns, gridRows, doRender]);
   
   // 处理窗口大小变化
   useEffect(() => {
     const handleResize = () => {
       if (rendererRef.current) {
-        rendererRef.current.resizeCanvas();
-        rendererRef.current.render();
+        rendererRef.current.resize();
+        doRender();
       }
       
-      // 窗口大小变化时，更新 totalHeight 并检查滚动位置，避免底部空白
+      // 窗口大小变化时，检查滚动位置，避免底部空白
       if (containerRef.current && filteredRows.length >= 0) {
         const viewportHeight = containerRef.current.clientHeight;
         const addRowButtonHeight = CELL_HEIGHT;
         const totalContentHeight = HEADER_HEIGHT + (filteredRows.length * CELL_HEIGHT) + addRowButtonHeight;
-        // 更新 totalHeight，确保至少等于视口高度
-        const newTotalHeight = Math.max(totalContentHeight, viewportHeight);
-        setTotalHeight(newTotalHeight);
         
         if (totalContentHeight <= viewportHeight) {
           if (scrollY !== 0) {
@@ -903,7 +590,7 @@ export function CanvasSpreadsheetTableView({
       window.removeEventListener("resize", handleResize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredRows.length, scrollY]);
+  }, [filteredRows.length, scrollY, doRender]);
   
   // 处理滚动
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -962,7 +649,20 @@ export function CanvasSpreadsheetTableView({
     
     setScrollX(newScrollX);
     setScrollY(newScrollY);
-  }, [filteredRows.length]);
+    // 滚动时关闭所有已打开的瓦片（dropdown/popover/sheet）
+    setMultiSelectOpen(null);
+    setHoveredRowIndex(null);
+    setHoveredColumnKey(null);
+    setConditionMenuOpen(false);
+    setColumnMenuOpen(null);
+    setRowMenuOpen(null);
+    // RAF 节流：同一帧内多次滚动只触发一次重绘
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      doRender();
+    });
+  }, [filteredRows.length, doRender]);
   
   // 处理单元格点击
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1066,22 +766,27 @@ export function CanvasSpreadsheetTableView({
     const addRowButtonHeight = CELL_HEIGHT;
     return contentHeight + addRowButtonHeight;
   }, [filteredRows.length]);
-  
-  // 动态计算内容区域高度，确保当内容高度小于视口高度时，至少等于视口高度
-  const [totalHeight, setTotalHeight] = useState(() => {
-    const contentHeight = HEADER_HEIGHT + (filteredRows.length * CELL_HEIGHT);
-    const addRowButtonHeight = CELL_HEIGHT;
-    return contentHeight + addRowButtonHeight;
-  });
-  
+
+  // 视口高度（用于：内容短时让添加行按钮位于视口底部）
+  const [viewportHeight, setViewportHeight] = useState(0);
   useEffect(() => {
-    if (containerRef.current) {
-      const viewportHeight = containerRef.current.clientHeight;
-      // 如果内容高度小于视口高度，使用视口高度，避免底部空白
-      const newTotalHeight = Math.max(actualContentHeight, viewportHeight);
-      setTotalHeight(newTotalHeight);
-    }
-  }, [actualContentHeight]);
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 滚动内容高度：至少等于视口高度，确保内容短时添加行按钮可位于视口底部
+  const totalHeight = Math.max(actualContentHeight, viewportHeight || actualContentHeight);
+
+  // 添加行按钮的 top：内容短时置于视口底部，否则置于最后一行下方
+  const addRowButtonTop =
+    viewportHeight > 0 && actualContentHeight < viewportHeight
+      ? viewportHeight - CELL_HEIGHT
+      : HEADER_HEIGHT + filteredRows.length * CELL_HEIGHT;
   
   // 格式化显示值（用于编辑器的显示）
   const formatDisplayValue = useCallback((value: string, col: typeof table.columns[0]) => {
@@ -1093,7 +798,8 @@ export function CanvasSpreadsheetTableView({
       case "date":
         return value;
       case "multi_select":
-        return value.split(",").filter(v => v).join(", ");
+        // 按逗号或空格分割，去重后显示，避免 "注册 注册" 等重复值
+        return [...new Set(value.split(/[,\s]+/).map(v => v.trim()).filter(v => v))].join(", ");
       default:
         return value;
     }
@@ -1166,7 +872,7 @@ export function CanvasSpreadsheetTableView({
       
       case "multi_select":
         const multiOptions = col.options?.options || [];
-        const selectedValues = cellValue ? cellValue.split(",").filter(v => v) : [];
+        const selectedValues = cellValue ? [...new Set(cellValue.split(/[,\s]+/).map(v => v.trim()).filter(v => v))] : [];
         const filteredOptions = multiOptions.filter((option: string) => option && option.trim());
         const isMultiSelectOpen = multiSelectOpen?.rowId === editingCell?.rowId && multiSelectOpen?.columnKey === editingCell?.columnKey;
         
@@ -1182,43 +888,7 @@ export function CanvasSpreadsheetTableView({
           ? selectedValues.join(", ") 
           : "请选择";
         
-        return (
-          <Popover open={isMultiSelectOpen} onOpenChange={(open) => {
-            if (open) {
-              setMultiSelectOpen({ rowId: editingCell!.rowId, columnKey: editingCell!.columnKey });
-              setTimeout(() => {
-                if (multiSelectTriggerRef.current) {
-                  const width = multiSelectTriggerRef.current.offsetWidth;
-                  setPopoverWidth(width);
-                }
-              }, 0);
-            } else {
-              setMultiSelectOpen(null);
-              if (editingCell) {
-                onCellChange(editingCell.rowId, editingCell.columnKey, cellValue);
-              }
-            }
-          }}>
-            <PopoverTrigger asChild>
-              <button
-                ref={multiSelectTriggerRef}
-                type="button"
-                onClick={() => {
-                  if (multiSelectTriggerRef.current) {
-                    const width = multiSelectTriggerRef.current.offsetWidth;
-                    setPopoverWidth(width);
-                  }
-                }}
-                className={cn(
-                  "h-full w-full flex items-center justify-between gap-2 rounded-none border-0 bg-transparent px-3 py-2 text-sm",
-                  selectedValues.length === 0 && "text-muted-foreground"
-                )}
-              >
-                <span className="truncate flex-1 text-left">{displayText}</span>
-                <ChevronDownIcon className="h-4 w-4 opacity-50 shrink-0" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="p-1" align="start" style={{ width: `${popoverWidth}px`, minWidth: `${popoverWidth}px` }}>
+        const multiSelectContent = (
               <div className="max-h-60 overflow-y-auto custom-scrollbar">
                 {filteredOptions.map((option: string) => (
                   <div
@@ -1259,8 +929,53 @@ export function CanvasSpreadsheetTableView({
                   </div>
                 ))}
               </div>
-            </PopoverContent>
-          </Popover>
+        );
+
+        return (
+          <ResponsivePopover
+            open={isMultiSelectOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                setMultiSelectOpen({ rowId: editingCell!.rowId, columnKey: editingCell!.columnKey });
+                setTimeout(() => {
+                  if (multiSelectTriggerRef.current) {
+                    const width = multiSelectTriggerRef.current.offsetWidth;
+                    setPopoverWidth(width);
+                  }
+                }, 0);
+              } else {
+                setMultiSelectOpen(null);
+                if (editingCell) {
+                  const normalized = [...new Set(cellValue.split(/[,\s]+/).map(v => v.trim()).filter(v => v))].join(",");
+                  onCellChange(editingCell.rowId, editingCell.columnKey, normalized);
+                }
+              }
+            }}
+            trigger={
+              <button
+                ref={multiSelectTriggerRef}
+                type="button"
+                onClick={() => {
+                  if (multiSelectTriggerRef.current) {
+                    const width = multiSelectTriggerRef.current.offsetWidth;
+                    setPopoverWidth(width);
+                  }
+                }}
+                className={cn(
+                  "h-full w-full flex items-center justify-between gap-2 rounded-none border-0 bg-transparent px-3 py-2 text-sm",
+                  selectedValues.length === 0 && "text-muted-foreground"
+                )}
+              >
+                <span className="truncate flex-1 text-left">{displayText}</span>
+                <ChevronDownIcon className="h-4 w-4 opacity-50 shrink-0" />
+              </button>
+            }
+            title="多选"
+            content={multiSelectContent}
+            align="start"
+            contentClassName="p-1"
+            contentStyle={{ width: `${popoverWidth}px`, minWidth: `${popoverWidth}px` }}
+          />
         );
       
       default: // text
@@ -1296,62 +1011,83 @@ export function CanvasSpreadsheetTableView({
   }
   
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* 工具栏 */}
-      <div className="flex items-center gap-2 p-2 border-b bg-muted/50 shrink-0">
-        <Button size="sm" variant="outline" onClick={onAddRow}>
-          <Plus className="h-4 w-4 mr-1" />
-          添加记录
+    <div className="flex flex-col h-full min-h-0 min-w-0">
+      {/* 工具栏 - 响应式：小屏换行、图标+文字 */}
+      <div className="flex flex-wrap items-center gap-2 p-2 sm:p-3 border-b bg-muted/50 shrink-0">
+        <Button size="sm" variant="outline" onClick={onAddRow} className="gap-1.5 shrink-0">
+          <Plus className="h-4 w-4 shrink-0" />
+          <span className="hidden sm:inline">添加记录</span>
         </Button>
+        {(onEditByCondition || onDeleteByCondition || onQueryByCondition) && (
+          <ResponsiveMenu
+            open={conditionMenuOpen}
+            onOpenChange={setConditionMenuOpen}
+            trigger={
+              <Button size="sm" variant="outline" className="gap-1 shrink-0">
+                <span className="hidden sm:inline">按条件操作</span>
+                <ChevronDownIcon className="h-4 w-4 shrink-0" />
+              </Button>
+            }
+            title="按条件操作"
+            align="start"
+            items={[
+              ...(onQueryByCondition ? [{ icon: <Search className="h-4 w-4" />, label: "按条件查找", onClick: onQueryByCondition }] : []),
+              ...(onEditByCondition ? [{ icon: <Pencil className="h-4 w-4" />, label: "按条件编辑", onClick: onEditByCondition }] : []),
+              ...(onDeleteByCondition ? [{ icon: <Trash2 className="h-4 w-4" />, label: "按条件删除", onClick: onDeleteByCondition, variant: "destructive" as const }] : []),
+            ]}
+          />
+        )}
         {onUndo && (
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={onUndo}
             disabled={!canUndo}
             title="撤销 (Ctrl+Z)"
+            className="shrink-0"
           >
-            <Undo2 className="h-4 w-4 mr-1" />
-            撤销
+            <Undo2 className="h-4 w-4" />
+            <span className="hidden sm:inline">撤销</span>
           </Button>
         )}
         {onRedo && (
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={onRedo}
             disabled={!canRedo}
             title="重做 (Ctrl+Y)"
+            className="shrink-0"
           >
-            <Redo2 className="h-4 w-4 mr-1" />
-            重做
+            <Redo2 className="h-4 w-4" />
+            <span className="hidden sm:inline">重做</span>
           </Button>
         )}
         {/* 保存按钮 - 一直存在 */}
-        <div className="flex items-center gap-2 ml-auto">
-          {/* 筛选按钮 */}
+        <div className="flex flex-wrap items-center gap-2 ml-auto">
           <Button
             size="sm"
             variant={filterGroups.length > 0 ? "default" : "outline"}
             onClick={() => setShowFilterPanel(!showFilterPanel)}
-            className="gap-2"
+            className="gap-1.5 shrink-0"
           >
             <Filter className="h-4 w-4" />
-            筛选
+            <span className="hidden sm:inline">筛选</span>
             {filterGroups.length > 0 && (
-              <span className="ml-1 bg-primary-foreground text-primary px-1.5 py-0.5 rounded text-xs">
+              <span className="bg-primary-foreground text-primary px-1.5 py-0.5 rounded text-xs">
                 {filterGroups.reduce((sum, g) => sum + g.conditions.length, 0)}
               </span>
             )}
           </Button>
           {onImportRows && (
-            <Button 
-              size="sm" 
-              variant="outline" 
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => setImportDialogOpen(true)}
+              className="shrink-0"
             >
-              <Upload className="h-4 w-4 mr-1" />
-              导入 Excel
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">导入 Excel</span>
             </Button>
           )}
           {onSave && (
@@ -1359,10 +1095,10 @@ export function CanvasSpreadsheetTableView({
               size="sm"
               onClick={onSave}
               disabled={saving || !hasUnsavedChanges}
-              className="gap-2"
+              className="gap-1.5 shrink-0"
             >
               <Save className="h-4 w-4" />
-              {saving ? "保存中..." : "保存"}
+              <span className="hidden sm:inline">{saving ? "保存中..." : "保存"}</span>
             </Button>
           )}
         </div>
@@ -1570,7 +1306,7 @@ export function CanvasSpreadsheetTableView({
                       }}
                       className="ml-14 h-7"
                     >
-                      <Plus className="h-3 w-3 mr-1" />
+                      <Plus className="h-3 w-3" />
                       添加条件
                     </Button>
                   </div>
@@ -1591,7 +1327,7 @@ export function CanvasSpreadsheetTableView({
                   }],
                 }]);
               }}>
-                <Plus className="h-4 w-4 mr-1" />
+                <Plus className="h-4 w-4" />
                 添加筛选组
               </Button>
               {filterGroups.length > 0 && (
@@ -1607,18 +1343,59 @@ export function CanvasSpreadsheetTableView({
         </div>
       )}
       
-      {/* Canvas 表格容器 */}
+      {/* Canvas 表格容器 - min-w-0 使 flex 子项可收缩，overflow-auto 支持横向+纵向滚动 */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-auto relative min-h-0 custom-scrollbar"
+        className="flex-1 min-w-0 overflow-auto relative min-h-0 custom-scrollbar"
         onScroll={handleScroll}
       >
-        <div style={{ width: totalWidth, height: totalHeight, position: "relative" }}>
-          <canvas
-            ref={canvasRef}
-            className="absolute top-0 left-0"
-            style={{ width: "100%", height: "100%" }}
-            onClick={handleCanvasClick}
+        {/* 滚动占位 - stickyHeader 时表头用 position:sticky 吸顶，由浏览器原生处理避免抖动 */}
+        <div
+          style={{
+            width: totalWidth,
+            height: totalHeight,
+            minWidth: totalWidth,
+            minHeight: totalHeight,
+            position: stickyHeader ? "relative" : undefined,
+            zIndex: stickyHeader ? 5 : undefined,
+          }}
+          aria-hidden
+        >
+          {stickyHeader && (
+            <div
+              className="sticky top-0 left-0"
+              style={{
+                width: totalWidth,
+                height: HEADER_HEIGHT,
+                zIndex: 10,
+              }}
+            >
+              <canvas
+                ref={headerCanvasRef}
+                className="pointer-events-none"
+                style={{
+                  width: `${totalWidth}px`,
+                  height: `${HEADER_HEIGHT}px`,
+                }}
+                width={totalWidth * (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1)}
+                height={HEADER_HEIGHT * (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1)}
+                aria-hidden
+              />
+            </div>
+          )}
+        </div>
+        
+        {/* Canvas - stickyHeader 时仅绘制 body，表头用定位层；否则整体绘制 */}
+        <canvas
+          ref={canvasRef}
+          className="absolute top-0 left-0"
+          style={{ 
+            width: "100%", 
+            height: "100%", 
+            pointerEvents: "auto",
+            transform: `translate3d(${scrollX}px, ${scrollY}px, 0)`,
+          }}
+          onClick={handleCanvasClick}
             onMouseMove={(e) => {
               if (!rendererRef.current || !canvasRef.current) return;
               // 检查是否在覆盖层元素上（按钮、下拉菜单等）
@@ -1671,6 +1448,15 @@ export function CanvasSpreadsheetTableView({
             }}
           />
           
+          {/* 覆盖层 - stickyHeader 时仅横向偏移（表头用 position:sticky），否则跟随滚动 */}
+          <div 
+            className="absolute inset-0 pointer-events-none z-10"
+            style={{
+              transform: stickyHeader
+                ? `translate3d(${scrollX}px, 0, 0)`
+                : `translate3d(${scrollX}px, ${scrollY}px, 0)`,
+            }}
+          >
           {/* ID列宽调整手柄 */}
           {(() => {
             const idColX = Math.max(0, -scrollX);
@@ -1679,7 +1465,7 @@ export function CanvasSpreadsheetTableView({
               return (
                 <div
                   key="id-column-resize"
-                  className="absolute top-0 cursor-col-resize hover:bg-primary/50 transition-colors z-30"
+                  className="absolute top-0 cursor-col-resize hover:bg-primary/50 transition-colors z-30 pointer-events-auto"
                   style={{
                     left: `${idColX + idWidth - 1}px`,
                     width: "2px",
@@ -1707,7 +1493,7 @@ export function CanvasSpreadsheetTableView({
                   {hoveredColumnKey === col.key && (
                     <div
                       data-overlay
-                      className="absolute top-0 z-40"
+                      className="absolute top-0 z-40 pointer-events-auto"
                       style={{
                         left: `${colX + width - 30}px`,
                         top: "5px",
@@ -1724,8 +1510,10 @@ export function CanvasSpreadsheetTableView({
                         e.stopPropagation();
                       }}
                     >
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                      <ResponsiveMenu
+                        open={columnMenuOpen === col.key}
+                        onOpenChange={(open) => setColumnMenuOpen(open ? col.key : null)}
+                        trigger={
                           <Button
                             variant="ghost"
                             size="sm"
@@ -1734,35 +1522,20 @@ export function CanvasSpreadsheetTableView({
                           >
                             <MoreVertical className="h-4 w-4" />
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onEditColumn(col.key);
-                            }}
-                          >
-                            <Pencil className="h-4 w-4 mr-2" />
-                            编辑
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setColumnToDelete({ key: col.key, label: col.label });
-                              setDeleteColumnDialogOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            删除
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                        }
+                        title={`列: ${col.label}`}
+                        align="end"
+                        stopPropagation
+                        items={[
+                          { icon: <Pencil className="h-4 w-4" />, label: "编辑", onClick: () => onEditColumn(col.key) },
+                          { icon: <Trash2 className="h-4 w-4" />, label: "删除", onClick: () => { setColumnToDelete({ key: col.key, label: col.label }); setDeleteColumnDialogOpen(true); }, variant: "destructive" },
+                        ]}
+                      />
                     </div>
                   )}
                   {/* 列宽调整手柄 */}
                   <div
-                    className="absolute top-0 cursor-col-resize hover:bg-primary/50 transition-colors z-30"
+                    className="absolute top-0 cursor-col-resize hover:bg-primary/50 transition-colors z-30 pointer-events-auto"
                     style={{
                       left: `${colX + width - 1}px`,
                       width: "2px",
@@ -1789,7 +1562,7 @@ export function CanvasSpreadsheetTableView({
             return (
               <div
                 key="add-column-button"
-                className="absolute top-0 z-30 bg-muted border-0"
+                className="absolute top-0 z-30 bg-muted border-0 pointer-events-auto"
                 style={{
                   left: `${Math.max(0, lastColX)}px`,
                   top: "0px",
@@ -1816,7 +1589,7 @@ export function CanvasSpreadsheetTableView({
           
           {/* 添加行按钮 - 在表格底部 */}
           <div
-            className="absolute z-30 bg-muted/30 border border-border"
+            className="absolute z-30 bg-muted/30 border border-border pointer-events-auto"
             style={{
               left: `${-scrollX}px`,
               top: `${HEADER_HEIGHT + (filteredRows.length * CELL_HEIGHT) - scrollY}px`,
@@ -1832,7 +1605,7 @@ export function CanvasSpreadsheetTableView({
               onClick={onAddRow}
               className="w-full text-muted-foreground hover:text-foreground"
             >
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               添加行
             </Button>
           </div>
@@ -1840,7 +1613,7 @@ export function CanvasSpreadsheetTableView({
           {/* 单元格编辑覆盖层 */}
           {editingCell && cellEditorRect && (
             <div
-              className="absolute border-2 border-blue-500 bg-white z-50 shadow-lg"
+              className="absolute border-2 border-primary bg-background z-50 shadow-lg pointer-events-auto"
               style={{
                 left: `${Math.max(0, cellEditorRect.x)}px`,
                 top: `${Math.max(HEADER_HEIGHT, cellEditorRect.y)}px`,
@@ -1855,56 +1628,60 @@ export function CanvasSpreadsheetTableView({
             </div>
           )}
           
-          {/* 删除行按钮（悬浮显示）- 在每行的最右侧列中 */}
-          {onDeleteRow && hoveredRowIndex !== null && hoveredRowIndex >= 0 && hoveredRowIndex < filteredRows.length && (
+          {/* 操作列：编辑/删除通过下拉切换 */}
+          {(onEditRow || onDeleteRow) && hoveredRowIndex !== null && hoveredRowIndex >= 0 && hoveredRowIndex < filteredRows.length && (
             <div
               data-overlay
-              className="absolute z-40 transition-opacity"
+              className="absolute z-40 transition-opacity pointer-events-auto"
               style={{
-                left: `${totalWidth - scrollX}px`, // 在表格最右侧边缘
+                left: `${totalWidth - scrollX}px`,
                 top: `${HEADER_HEIGHT + (hoveredRowIndex * CELL_HEIGHT) - scrollY + CELL_HEIGHT / 2}px`,
-                transform: "translate(-50%, -50%)", // 居中定位，类似原设计的 right-1/2 translate-x-1/2
+                transform: "translate(-100%, -50%)",
               }}
               onMouseEnter={(e) => {
                 e.stopPropagation();
-                // 保持 hover 状态
               }}
               onMouseLeave={(e) => {
                 e.stopPropagation();
-                // 不立即清除，让 Canvas 的 onMouseLeave 处理
               }}
               onMouseMove={(e) => {
                 e.stopPropagation();
               }}
             >
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-destructive/10 bg-background/90 shadow-sm"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const row = filteredRows[hoveredRowIndex];
-                  if (row && onDeleteRow) {
-                    onDeleteRow(row);
-                  }
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                title="删除这一行"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <ResponsiveMenu
+                open={rowMenuOpen === hoveredRowIndex}
+                onOpenChange={(open) => setRowMenuOpen(open ? hoveredRowIndex : null)}
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 hover:bg-muted bg-background/90 shadow-sm"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    title="操作"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                }
+                title="行操作"
+                align="end"
+                stopPropagation
+                items={[
+                  ...(onEditRow ? [{ icon: <Pencil className="h-4 w-4" />, label: "编辑", onClick: () => { const row = filteredRows[hoveredRowIndex]; if (row && onEditRow) onEditRow(row); } }] : []),
+                  ...(onDeleteRow ? [{ icon: <Trash2 className="h-4 w-4" />, label: "删除", onClick: () => { const row = filteredRows[hoveredRowIndex]; if (row && onDeleteRow) onDeleteRow(row); }, variant: "destructive" as const }] : []),
+                ]}
+              />
             </div>
           )}
-        </div>
+          </div>
       </div>
 
       {/* 删除列确认对话框 */}
       <Dialog open={deleteColumnDialogOpen} onOpenChange={setDeleteColumnDialogOpen}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
           <DialogHeader>
             <DialogTitle>确认删除列</DialogTitle>
             <DialogDescription>
@@ -1941,7 +1718,7 @@ export function CanvasSpreadsheetTableView({
       {onImportRows && (
         <>
           <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[85dvh] sm:max-h-[90vh] mx-auto">
               <DialogHeader>
                 <DialogTitle>导入 Excel 文件</DialogTitle>
                 <DialogDescription>
@@ -2024,8 +1801,8 @@ export function CanvasSpreadsheetTableView({
 
           {/* 列映射对话框（新表格导入时定义列的 key，或列不一致时重新定义） */}
           <Dialog open={columnMappingDialogOpen} onOpenChange={setColumnMappingDialogOpen}>
-            <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto custom-scrollbar">
-              <DialogHeader>
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl max-h-[85dvh] sm:max-h-[80vh] flex flex-col overflow-hidden p-0 gap-0 mx-auto">
+              <DialogHeader className="shrink-0 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 pr-12 border-b">
                 <DialogTitle>定义列信息</DialogTitle>
                 <DialogDescription>
                   {importMode === "replace" 
@@ -2033,11 +1810,12 @@ export function CanvasSpreadsheetTableView({
                     : "请为 Excel 中的每一列定义列 Key、数据类型和默认值。列 Key 将用于数据存储，建议使用英文和下划线。"}
                 </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 mt-4">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-3 sm:py-4 custom-scrollbar">
+                <div className="space-y-4">
                 <div className="space-y-2">
                   {columnMappings.map((mapping, index) => (
                     <div key={index} className="p-3 border rounded-lg space-y-3">
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-col sm:flex-row gap-4">
                         <div className="flex-1">
                           <Label className="text-xs text-muted-foreground mb-1 block">
                             Excel 列名
@@ -2106,7 +1884,8 @@ export function CanvasSpreadsheetTableView({
                   ))}
                 </div>
               </div>
-              <DialogFooter>
+              </div>
+              <DialogFooter className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2">
                 <Button 
                   variant="outline" 
                   onClick={() => {
@@ -2147,7 +1926,7 @@ export function CanvasSpreadsheetTableView({
 
           {/* 导入模式选择对话框（已有表格且列一致时） */}
           <Dialog open={importModeDialogOpen} onOpenChange={setImportModeDialogOpen}>
-            <DialogContent>
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
               <DialogHeader>
                 <DialogTitle>选择导入模式</DialogTitle>
                 <DialogDescription>
@@ -2208,15 +1987,12 @@ export function CanvasSpreadsheetTableView({
                     // 创建列映射（列一致时，直接使用现有列）
                     const mappings = excelHeaders.map(header => {
                       const headerStr = String(header).trim();
-                      const col = table.columns.find(c => {
-                        const normalize = (str: string) => String(str).trim().toLowerCase();
-                        return (
-                          headerStr === c.label ||
-                          headerStr === c.key ||
-                          normalize(headerStr) === normalize(c.label) ||
-                          normalize(headerStr) === normalize(c.key)
-                        );
-                      });
+                      const col = table.columns.find((c) =>
+                      headerStr === c.label ||
+                      headerStr === c.key ||
+                      normalize(headerStr) === normalize(c.label) ||
+                      normalize(headerStr) === normalize(c.key)
+                    );
                       return {
                         excelHeader: headerStr,
                         key: col?.key || headerStr,
@@ -2236,7 +2012,7 @@ export function CanvasSpreadsheetTableView({
 
           {/* 列不一致确认对话框 */}
           <Dialog open={columnMismatchDialogOpen} onOpenChange={setColumnMismatchDialogOpen}>
-            <DialogContent>
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[85dvh] sm:max-h-[90vh] mx-auto overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>列不一致</DialogTitle>
                 <DialogDescription>
@@ -2273,26 +2049,7 @@ export function CanvasSpreadsheetTableView({
                 <Button 
                   variant="destructive"
                   onClick={() => {
-                    // 创建初始列映射，然后显示列映射对话框让用户确认/修改
-                    const generateKeyFromLabel = (label: string, existingKeys: Set<string>): string => {
-                      let key = label.trim();
-                      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key) && !existingKeys.has(key)) {
-                        return key;
-                      }
-                      key = key.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').toLowerCase();
-                      if (!key || !/^[a-zA-Z_]/.test(key)) {
-                        key = 'col_' + key;
-                      }
-                      let finalKey = key;
-                      let counter = 1;
-                      while (existingKeys.has(finalKey)) {
-                        finalKey = `${key}_${counter}`;
-                        counter++;
-                      }
-                      return finalKey;
-                    };
-                    
-                    const existingKeys = new Set(table.columns.map(col => col.key));
+                    const existingKeys = new Set(table.columns.map((col) => col.key));
                     const mappings = excelHeaders.map(header => {
                       const headerStr = String(header).trim();
                       const key = generateKeyFromLabel(headerStr, existingKeys);
@@ -2320,7 +2077,7 @@ export function CanvasSpreadsheetTableView({
 
           {/* 错误提示对话框 */}
           <Dialog open={errorDialogOpen} onOpenChange={setErrorDialogOpen}>
-            <DialogContent>
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
               <DialogHeader>
                 <DialogTitle>错误</DialogTitle>
                 <DialogDescription>
@@ -2337,7 +2094,7 @@ export function CanvasSpreadsheetTableView({
 
           {/* 成功提示对话框 */}
           <Dialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
-            <DialogContent>
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
               <DialogHeader>
                 <DialogTitle>导入成功</DialogTitle>
                 <DialogDescription className="whitespace-pre-line">

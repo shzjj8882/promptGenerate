@@ -1,12 +1,30 @@
 import type { Metadata } from "next";
+import dynamic from "next/dynamic";
 import { LandingHeader } from "@/components/landing/landing-header";
 import { LandingHero } from "@/components/landing/landing-hero";
-import { LandingFeatures } from "@/components/landing/landing-features";
-import { LandingUseCases } from "@/components/landing/landing-use-cases";
-import { LandingEnterpriseValue } from "@/components/landing/landing-enterprise-value";
-import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
-import { LandingFooter } from "@/components/landing/landing-footer";
 import { StructuredData } from "@/components/landing/structured-data";
+
+// 首屏以下区块懒加载，减小首包体积
+const LandingFeatures = dynamic(
+  () => import("@/components/landing/landing-features").then((m) => ({ default: m.LandingFeatures })),
+  { ssr: true }
+);
+const LandingUseCases = dynamic(
+  () => import("@/components/landing/landing-use-cases").then((m) => ({ default: m.LandingUseCases })),
+  { ssr: true }
+);
+const LandingEnterpriseValue = dynamic(
+  () => import("@/components/landing/landing-enterprise-value").then((m) => ({ default: m.LandingEnterpriseValue })),
+  { ssr: true }
+);
+const LandingHowItWorks = dynamic(
+  () => import("@/components/landing/landing-how-it-works").then((m) => ({ default: m.LandingHowItWorks })),
+  { ssr: true }
+);
+const LandingFooter = dynamic(
+  () => import("@/components/landing/landing-footer").then((m) => ({ default: m.LandingFooter })),
+  { ssr: true }
+);
 
 export const metadata: Metadata = {
   title: "PromptHub - 智能体占位符 SaaS 平台 | 占位符生成、接口、聊天",

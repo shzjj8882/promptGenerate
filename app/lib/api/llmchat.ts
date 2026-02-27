@@ -25,10 +25,18 @@ export interface PromptChatRequest {
   mcp_tool_names?: string[];
 }
 
+/** 异步任务通知方式 */
+export type NotificationType = "none" | "email";
+
+/** 邮件正文格式 */
+export type EmailContentType = "html" | "plain" | "file";
+
 export interface NotificationOption {
-  type?: "none" | "email";
+  type?: NotificationType;
   config_id?: string;
   email_to?: string;
+  /** 邮件正文格式：html（富文本）| plain（纯文本）| file（文件附件） */
+  email_content_type?: EmailContentType;
 }
 
 export interface PromptApiRequest {
@@ -180,14 +188,21 @@ export async function streamPromptChat(
   }
 }
 
+/** 接口模式 API 原始响应（含 data 等） */
+export interface PromptApiRawResponse {
+  data?: PromptApiResponse | PromptApiAsyncResponse;
+  success?: boolean;
+  [key: string]: unknown;
+}
+
 /**
  * 调用接口模式（非流式）
- * 无通知时同步返回 content；有通知时异步返回 task_id
+ * 返回完整响应对象，便于调试；业务数据在 response.data 中
  */
 export async function apiPrompt(
   scene: string,
   request: PromptApiRequest
-): Promise<PromptApiResponse | PromptApiAsyncResponse> {
+): Promise<PromptApiRawResponse> {
   const url = buildApiUrl(`/api/llmchat/prompts/${scene}/api`);
   const token = getAuthToken();
 
@@ -211,7 +226,7 @@ export async function apiPrompt(
   }
 
   const result = await response.json();
-  return result.data;
+  return result;
 }
 
 /**

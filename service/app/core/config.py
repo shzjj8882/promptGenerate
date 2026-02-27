@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # LLM Chat 异步任务队列（Redis Stream）
     LLMCHAT_STREAM_NAME: str = Field(default="llmchat:tasks", description="异步任务队列 Stream 名称")
+    # 接口模式默认走异步队列（减轻 API 压力），设为 False 则保持同步阻塞
+    LLM_API_ASYNC_DEFAULT: bool = Field(default=True, description="接口模式默认异步队列，sync=true 可覆盖")
     
     # CORS 配置（从环境变量读取，支持逗号分隔）
     # 先定义为字符串类型，然后在验证器中转换为列表

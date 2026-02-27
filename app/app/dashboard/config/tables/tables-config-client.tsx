@@ -45,6 +45,7 @@ import {
   type TableRowUpdate,
   type TableColumn,
 } from "@/lib/api/multi-dimension-tables";
+import { filterNonDeletedRows } from "@/lib/utils/table-rows";
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -581,76 +582,29 @@ function TablesConfigClientImpl() {
   
   // 记录历史状态
   const recordHistory = useCallback((rows: TableRowType[], columns: TableColumn[]) => {
-    console.log('[记录历史] 开始记录历史', {
-      isUndoRedo,
-      historyInitialized: historyInitializedRef.current,
-      rowsCount: rows.length,
-      columnsCount: columns.length,
-      currentHistoryIndex: historyIndexRef.current,
-    });
-    
-    if (isUndoRedo) {
-      console.log('[记录历史] 跳过记录（撤销/重做操作）');
-      return; // 撤销/重做操作时不记录历史
-    }
-    
-    // 如果历史记录还未初始化，不记录（等待 useEffect 初始化）
-    if (!historyInitializedRef.current) {
-      console.log('[记录历史] 跳过记录（历史记录未初始化）');
-      return;
-    }
-    
+    if (isUndoRedo) return;
+    if (!historyInitializedRef.current) return;
+
     const newState: HistoryState = {
-      rows: JSON.parse(JSON.stringify(rows)), // 深拷贝
-      columns: JSON.parse(JSON.stringify(columns)), // 深拷贝
+      rows: JSON.parse(JSON.stringify(rows)),
+      columns: JSON.parse(JSON.stringify(columns)),
     };
-    
-    console.log('[记录历史] 创建新状态', {
-      newStateRowsCount: newState.rows.length,
-      deletedRowsCount: newState.rows.filter((r: any) => r._deleted).length,
-    });
-    
-    // 使用函数式更新，通过 ref 获取最新的 historyIndex，避免闭包问题
+
     setHistory(prev => {
-      const currentIndex = historyIndexRef.current; // 使用 ref 获取最新值
-      
-      console.log('[记录历史] 更新历史记录', {
-        prevHistoryLength: prev.length,
-        currentIndex,
-      });
-      
-      // 如果历史记录为空，不应该发生（因为已经检查了 historyInitializedRef）
-      // 但为了安全，还是处理一下
+      const currentIndex = historyIndexRef.current;
       if (prev.length === 0) {
-        console.log('[记录历史] 历史记录为空，初始化第一条记录');
         const newHistory = [newState];
         const newIndex = 0;
         setHistoryIndex(newIndex);
         historyIndexRef.current = newIndex;
-        console.log('[记录历史] 历史记录已初始化', {
-          newHistoryLength: newHistory.length,
-          newIndex,
-        });
         return newHistory;
       }
-      
-      // 如果当前不在历史记录的末尾，删除后面的记录（因为新的操作会覆盖重做历史）
       const newHistory = prev.slice(0, currentIndex + 1);
       newHistory.push(newState);
-      // 限制历史记录数量，最多保留50条
-      if (newHistory.length > 50) {
-        newHistory.shift();
-      }
+      if (newHistory.length > 50) newHistory.shift();
       const newIndex = newHistory.length - 1;
       setHistoryIndex(newIndex);
-      historyIndexRef.current = newIndex; // 同步更新 ref
-      
-      console.log('[记录历史] 历史记录已更新', {
-        newHistoryLength: newHistory.length,
-        newIndex,
-        deletedRowsInNewState: newState.rows.filter((r: any) => r._deleted).length,
-      });
-      
+      historyIndexRef.current = newIndex;
       return newHistory;
     });
   }, [isUndoRedo]);
@@ -754,8 +708,7 @@ function TablesConfigClientImpl() {
       
       // 准备批量保存的数据（全量保存，排除已标记删除的行）
       // 保留已存在行的 row_id，只对新行自动生成 row_id
-      const rowsToSave: TableRowBulkData[] = localRows
-        .filter(row => !(row as any)._deleted) // 排除已标记删除的行
+      const rowsToSave: TableRowBulkData[] = filterNonDeletedRows(localRows)
         .map(row => {
           const rowData: TableRowBulkData = {
             cells: row.cells,
@@ -812,18 +765,8 @@ function TablesConfigClientImpl() {
 
   const handleDeleteRow = (row: TableRowType) => {
     if (!table) return;
-    
-    console.log('[删除行] 开始删除操作', {
-      rowId: row.id,
-      historyInitialized: historyInitializedRef.current,
-      historyLength: history.length,
-      historyIndex: historyIndexRef.current,
-      localRowsCount: localRows.length,
-    });
-    
-    // 确保历史记录已初始化（如果未初始化，先初始化）
+
     if (!historyInitializedRef.current && history.length === 0) {
-      console.log('[删除行] 历史记录未初始化，先初始化历史记录');
       const initialState: HistoryState = {
         rows: JSON.parse(JSON.stringify(localRows)),
         columns: JSON.parse(JSON.stringify(table.columns)),
@@ -832,23 +775,13 @@ function TablesConfigClientImpl() {
       setHistoryIndex(0);
       historyIndexRef.current = 0;
       historyInitializedRef.current = true;
-      console.log('[删除行] 历史记录已初始化', {
-        initialStateRowsCount: initialState.rows.length,
-      });
     }
-    
-    // 标记行为已删除（保留 id，避免其他行的 id 变化）
-    const newRows = localRows.map(r => 
+
+    const newRows = localRows.map(r =>
       r.id === row.id ? { ...r, _deleted: true } : r
     );
     setLocalRows(newRows);
     setHasUnsavedChanges(true);
-    
-    console.log('[删除行] 准备记录历史', {
-      newRowsCount: newRows.length,
-      deletedRowId: row.id,
-    });
-    
     recordHistory(newRows, table.columns);
   };
 
@@ -999,7 +932,7 @@ function TablesConfigClientImpl() {
     <div className="h-full flex flex-col">
       
       {/* 电子表格式视图 - 直接显示，无需页面头部 */}
-      <div className="rounded-lg border bg-card flex flex-col overflow-hidden flex-1">
+      <div className="rounded-lg border bg-card flex flex-col overflow-hidden flex-1 min-h-0 min-w-0">
         {/* 渲染模式切换按钮 */}
         {table && (
           <div className="flex items-center justify-end gap-2 p-2 border-b bg-muted/30 shrink-0">

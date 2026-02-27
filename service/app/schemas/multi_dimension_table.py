@@ -137,3 +137,17 @@ class TableRowUpdateByCondition(BaseModel):
     condition: TableRowCondition = Field(..., description="更新条件")
     row_data: Optional[Dict[str, Any]] = Field(None, description="行级数据（额外信息）")
     cells: Optional[Dict[str, str]] = Field(None, description="单元格数据")
+
+
+class TableRowQueryCondition(BaseModel):
+    """多条件查询中的单个条件"""
+    column_key: str = Field(..., description="列 key（条件字段）")
+    operator: str = Field("equals", description="操作符：equals/contains/not_equals/not_contains/starts_with/ends_with")
+    value: str = Field(..., description="条件值")
+
+
+class TableRowQueryByConditions(BaseModel):
+    """多条件查询请求模型"""
+    conditions: List[TableRowQueryCondition] = Field(..., description="条件列表，至少一个")
+    logic: str = Field("and", description="条件间逻辑：and/or")
+    limit: Optional[int] = Field(None, description="返回条数限制，1 表示只返回单条")

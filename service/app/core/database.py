@@ -1,8 +1,12 @@
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 import redis.asyncio as redis
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # PostgreSQL 数据库引擎
 DATABASE_URL = (
@@ -55,22 +59,23 @@ async def init_db():
     from app.models.notification_config import NotificationConfig
     from app.models.llmchat_task import LLMChatTask
 
-    # 初始化 Redis
+    # 初始化 Redis（连接池优化：限制最大连接数，避免资源耗尽）
     redis_pool = redis.ConnectionPool(
         host=settings.REDIS_HOST,
         port=settings.REDIS_PORT,
         password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None,
         db=settings.REDIS_DB,
         decode_responses=True,
+        max_connections=50,
     )
     redis_client = redis.Redis(connection_pool=redis_pool)
 
     # 测试 Redis 连接
     try:
         await redis_client.ping()
-        print("Redis connection established")
+        logger.info("Redis connection established")
     except Exception as e:
-        print(f"Redis connection failed: {e}")
+        logger.warning("Redis connection failed: %s", e)
 
     # 数据库 schema 版本检查：一致则跳过建表，不一致则执行并记录版本
     from app.core.schema_version import needs_migration, write_applied_version
@@ -80,9 +85,9 @@ async def init_db():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         write_applied_version(current)
-        print(f"Database schema updated, version: {current}")
+        logger.info("Database schema updated, version: %s", current)
     else:
-        print(f"Database schema up to date, version: {current}")
+        logger.info("Database schema up to date, version: %s", current)
 
 
 async def get_db() -> AsyncSession:

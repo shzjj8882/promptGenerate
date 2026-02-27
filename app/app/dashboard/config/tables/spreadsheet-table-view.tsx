@@ -14,17 +14,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { ResponsiveMenu } from "@/components/ui/responsive-menu";
+import { ResponsivePopover } from "@/components/ui/responsive-popover";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +27,9 @@ import {
 import { DatePicker, DATE_FORMATS } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import type { MultiDimensionTable, TableRow as TableRowType } from "@/lib/api/multi-dimension-tables";
+import { filterNonDeletedRows } from "@/lib/utils/table-rows";
+import { generateKeyFromLabel, normalize } from "@/lib/utils/string";
+import { parseExcelFile, ExcelParseError } from "@/lib/utils/excel-parser";
 
 interface SpreadsheetTableViewProps {
   table: MultiDimensionTable;
@@ -99,6 +93,7 @@ export function SpreadsheetTableView({
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const multiSelectTriggerRef = useRef<HTMLButtonElement>(null);
+  const [columnMenuOpen, setColumnMenuOpen] = useState<string | null>(null);
   
   // 筛选相关状态
   type FilterOperator = "contains" | "equals" | "not_contains" | "not_equals" | "starts_with" | "ends_with";
@@ -236,7 +231,7 @@ export function SpreadsheetTableView({
       
       case "multi_select":
         const multiOptions = col.options?.options || [];
-        const selectedValues = cellValue ? cellValue.split(",").filter(v => v) : [];
+        const selectedValues = cellValue ? [...new Set(cellValue.split(/[,\s]+/).map(v => v.trim()).filter(v => v))] : [];
         const filteredOptions = multiOptions.filter((option: string) => option && option.trim());
         const isMultiSelectOpen = multiSelectOpen?.rowId === editingCell?.rowId && multiSelectOpen?.columnKey === editingCell?.columnKey;
         
@@ -252,46 +247,7 @@ export function SpreadsheetTableView({
           ? selectedValues.join(", ") 
           : "请选择";
         
-        return (
-          <Popover open={isMultiSelectOpen} onOpenChange={(open) => {
-            if (open) {
-              setMultiSelectOpen({ rowId: editingCell!.rowId, columnKey: editingCell!.columnKey });
-              // 使用 setTimeout 确保 DOM 已更新
-              setTimeout(() => {
-                if (multiSelectTriggerRef.current) {
-                  const width = multiSelectTriggerRef.current.offsetWidth;
-                  setPopoverWidth(width);
-                }
-              }, 0);
-            } else {
-              setMultiSelectOpen(null);
-              // 关闭时保存更改
-              if (editingCell) {
-                onCellChange(editingCell.rowId, editingCell.columnKey, cellValue);
-              }
-            }
-          }}>
-            <PopoverTrigger asChild>
-              <button
-                ref={multiSelectTriggerRef}
-                type="button"
-                onClick={() => {
-                  // 点击时获取宽度
-                  if (multiSelectTriggerRef.current) {
-                    const width = multiSelectTriggerRef.current.offsetWidth;
-                    setPopoverWidth(width);
-                  }
-                }}
-                className={cn(
-                  "h-full w-full flex items-center justify-between gap-2 rounded-none border-0 bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
-                  selectedValues.length === 0 && "text-muted-foreground"
-                )}
-              >
-                <span className="truncate flex-1 text-left">{displayText}</span>
-                <ChevronDownIcon className="h-4 w-4 opacity-50 shrink-0" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="p-1" align="start" style={{ width: `${popoverWidth}px`, minWidth: `${popoverWidth}px` }}>
+        const multiSelectContent = (
               <div className="max-h-60 overflow-y-auto">
                 {filteredOptions.map((option: string) => (
                   <div
@@ -334,8 +290,53 @@ export function SpreadsheetTableView({
                   </div>
                 ))}
               </div>
-            </PopoverContent>
-          </Popover>
+        );
+
+        return (
+          <ResponsivePopover
+            open={isMultiSelectOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                setMultiSelectOpen({ rowId: editingCell!.rowId, columnKey: editingCell!.columnKey });
+                setTimeout(() => {
+                  if (multiSelectTriggerRef.current) {
+                    const width = multiSelectTriggerRef.current.offsetWidth;
+                    setPopoverWidth(width);
+                  }
+                }, 0);
+              } else {
+                setMultiSelectOpen(null);
+                if (editingCell) {
+                  const normalized = [...new Set(cellValue.split(/[,\s]+/).map(v => v.trim()).filter(v => v))].join(",");
+                  onCellChange(editingCell.rowId, editingCell.columnKey, normalized);
+                }
+              }
+            }}
+            trigger={
+              <button
+                ref={multiSelectTriggerRef}
+                type="button"
+                onClick={() => {
+                  if (multiSelectTriggerRef.current) {
+                    const width = multiSelectTriggerRef.current.offsetWidth;
+                    setPopoverWidth(width);
+                  }
+                }}
+                className={cn(
+                  "h-full w-full flex items-center justify-between gap-2 rounded-none border-0 bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
+                  selectedValues.length === 0 && "text-muted-foreground"
+                )}
+              >
+                <span className="truncate flex-1 text-left">{displayText}</span>
+                <ChevronDownIcon className="h-4 w-4 opacity-50 shrink-0" />
+              </button>
+            }
+            title="多选"
+            content={multiSelectContent}
+            align="start"
+            contentClassName="p-1"
+            contentStyle={{ width: `${popoverWidth}px`, minWidth: `${popoverWidth}px` }}
+          />
         );
       
       default: // text
@@ -383,8 +384,8 @@ export function SpreadsheetTableView({
         return value;
       
       case "multi_select":
-        // 多选值用逗号分隔，显示时用逗号和空格分隔
-        return value.split(",").filter(v => v).join(", ");
+        // 按逗号或空格分割，去重后显示，避免 "注册 注册" 等重复值
+        return [...new Set(value.split(/[,\s]+/).map(v => v.trim()).filter(v => v))].join(", ");
       
       default:
         return value;
@@ -444,97 +445,16 @@ export function SpreadsheetTableView({
   }, [resizingColumn, resizeStartX, resizeStartWidth]);
 
   // 处理文件导入的函数
-  const handleFileImport = useCallback(async (file: File) => {
-    try {
-      // 动态导入 xlsx 库
-      const XLSX = await import("xlsx");
-      
-      const reader = new FileReader();
-      
-      reader.onload = (event) => {
-        try {
-          const data = new Uint8Array(event.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
-          
-          // 读取第一个工作表
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          
-          // 转换为 JSON（第一行作为标题）
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
-            header: 1,
-            defval: ""
-          }) as any[][];
-          
-          if (jsonData.length < 2) {
-            setErrorMessage("Excel 文件至少需要包含标题行和一行数据");
-            setErrorDialogOpen(true);
-            return;
-          }
-          
-          // 第一行是标题
-          const headers = (jsonData[0] as any[])?.filter(h => h !== null && h !== undefined && String(h).trim() !== "") || [];
-          
-          if (headers.length === 0) {
-            setErrorMessage("Excel 文件的第一行（标题行）为空，请检查文件格式");
-            setErrorDialogOpen(true);
-            return;
-          }
-          
-          console.log("Excel 标题行:", headers);
-          console.log("表格现有列:", table.columns.map(col => ({ key: col.key, label: col.label })));
-          
-          // 辅助函数：从label生成key（将中文和特殊字符转换为安全的key）
-          const generateKeyFromLabel = (label: string, existingKeys: Set<string>): string => {
-            // 先尝试直接使用label（如果已经是有效的key格式）
-            let key = label.trim();
-            
-            // 如果label已经是有效的key（只包含字母、数字、下划线），直接使用
-            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
-              // 检查是否已存在
-              if (!existingKeys.has(key)) {
-                return key;
-              }
-            }
-            
-            // 否则生成一个基于label的key
-            // 将中文和特殊字符转换为下划线分隔的格式
-            key = key
-              .replace(/[^\w\s-]/g, '') // 移除特殊字符
-              .replace(/\s+/g, '_') // 空格转下划线
-              .replace(/_+/g, '_') // 多个下划线合并为一个
-              .replace(/^_|_$/g, '') // 移除首尾下划线
-              .toLowerCase();
-            
-            // 如果key为空或不是以字母或下划线开头，添加前缀
-            if (!key || !/^[a-zA-Z_]/.test(key)) {
-              key = 'col_' + key;
-            }
-            
-            // 确保key唯一
-            let finalKey = key;
-            let counter = 1;
-            while (existingKeys.has(finalKey)) {
-              finalKey = `${key}_${counter}`;
-              counter++;
-            }
-            
-            return finalKey;
-          };
-          
-          // 创建列名到表格列 key 的映射
-          const columnMap: Record<string, string> = {};
-          const newColumns: Array<{ key: string; label: string; type?: string }> = [];
-          const existingKeys = new Set(table.columns.map(col => col.key));
-          
-          // 辅助函数：标准化字符串用于匹配（去除空格、转小写）
-          const normalize = (str: string | null | undefined): string => {
-            if (!str) return "";
-            return String(str).trim().toLowerCase();
-          };
-          
-          // 为Excel中的每个列创建映射
-          headers.forEach(header => {
+  const handleFileImport = useCallback(
+    async (file: File) => {
+      try {
+        const { headers, data: jsonData } = await parseExcelFile(file);
+
+        const columnMap: Record<string, string> = {};
+        const newColumns: Array<{ key: string; label: string; type?: string }> = [];
+        const existingKeys = new Set(table.columns.map((col) => col.key));
+
+        headers.forEach((header) => {
             const headerStr = String(header || "").trim();
             if (!headerStr) return;
             
@@ -556,7 +476,6 @@ export function SpreadsheetTableView({
               ) {
                 columnMap[headerStr] = col.key;
                 matched = true;
-                console.log(`匹配现有列: Excel列"${headerStr}" -> 表格列"${col.label}"(${col.key})`);
                 break;
               }
             }
@@ -571,96 +490,94 @@ export function SpreadsheetTableView({
                 label: headerStr,
                 type: "text", // 默认类型为文本
               });
-              console.log(`创建新列: Excel列"${headerStr}" -> 新列key"${newKey}"`);
+            }
+        });
+
+        if (newColumns.length > 0 && onImportColumns) {
+          onImportColumns(newColumns);
+        }
+
+        const importedRows: TableRowType[] = [];
+        const maxRowId =
+          rows.length > 0
+            ? Math.max(...rows.map((r) => (r.row_id >= 0 ? r.row_id : -1)), -1)
+            : -1;
+
+        for (let i = 0; i < jsonData.length; i++) {
+          const rowData = jsonData[i] as unknown[];
+            
+          const isEmpty = (cell: unknown) =>
+            cell === null ||
+            cell === undefined ||
+            String(cell).trim() === "";
+          if (!rowData || rowData.every(isEmpty)) {
+            continue;
+          }
+
+          const cells: Record<string, string> = {};
+          headers.forEach((header, index) => {
+            const columnKey = columnMap[String(header || "").trim()];
+            const cell =
+              rowData && rowData[index] !== undefined && rowData[index] !== null
+                ? rowData[index]
+                : null;
+            if (columnKey && cell !== null) {
+              cells[columnKey] = String(cell || "").trim();
             }
           });
-          
-          // 如果有新列需要创建，先创建列
-          if (newColumns.length > 0 && onImportColumns) {
-            console.log("创建新列:", newColumns);
-            onImportColumns(newColumns);
-            // 注意：这里假设列已经创建，但实际上可能需要等待列创建完成
-            // 为了简化，我们假设列会立即创建，如果实际需要等待，可以改为异步处理
-          }
-          
-          // 转换数据行
-          const importedRows: TableRowType[] = [];
-          const maxRowId = rows.length > 0 
-            ? Math.max(...rows.map(r => r.row_id >= 0 ? r.row_id : -1), -1)
-            : -1;
-          
-          for (let i = 1; i < jsonData.length; i++) {
-            const rowData = jsonData[i] as any[];
-            
-            // 跳过完全空行
-            if (!rowData || rowData.every(cell => cell === null || cell === undefined || String(cell).trim() === "")) {
-              continue;
-            }
-            
-            const cells: Record<string, string> = {};
-            
-            headers.forEach((header, index) => {
-              const columnKey = columnMap[String(header || "").trim()];
-              if (columnKey && rowData && rowData[index] !== undefined && rowData[index] !== null) {
-                const cellValue = String(rowData[index] || "").trim();
-                // 即使值为空也保留，因为可能是空字符串
-                cells[columnKey] = cellValue;
-              }
+
+          if (Object.keys(cells).length > 0) {
+            importedRows.push({
+              id: `temp-import-${Date.now()}-${i}`,
+              table_id: table.id,
+              row_id: maxRowId + importedRows.length + 1,
+              cells,
+              row_data: undefined,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             });
-            
-            // 只有当至少有一个单元格有数据时才添加行
-            if (Object.keys(cells).length > 0) {
-              const tempRowId = `temp-import-${Date.now()}-${i}`;
-              
-              importedRows.push({
-                id: tempRowId,
-                table_id: table.id,
-                row_id: maxRowId + importedRows.length + 1,
-                cells,
-                row_data: undefined,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              });
-            }
           }
-          
-          if (importedRows.length > 0) {
-            if (onImportRows) {
-              onImportRows(importedRows);
-            }
-            setImportDialogOpen(false);
-            if (fileInputRef.current) {
-              fileInputRef.current.value = "";
-            }
-            
-            const newColumnsInfo = newColumns.length > 0 
-              ? `\n\n已自动创建 ${newColumns.length} 个新列：${newColumns.map(col => col.label).join(", ")}`
+        }
+
+        if (importedRows.length > 0) {
+          if (onImportRows) {
+            onImportRows(importedRows);
+          }
+          setImportDialogOpen(false);
+          if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+          }
+          const newColumnsInfo =
+            newColumns.length > 0
+              ? `\n\n已自动创建 ${newColumns.length} 个新列：${newColumns.map((col) => col.label).join(", ")}`
               : "";
-            setSuccessMessage(`成功导入 ${importedRows.length} 行数据，共 ${headers.length} 个列。${newColumnsInfo}`);
-            setSuccessDialogOpen(true);
-          } else {
-            setErrorMessage("没有找到可导入的数据。请检查Excel文件是否包含数据行。");
-            setErrorDialogOpen(true);
-          }
-        } catch (error) {
-          console.error("解析 Excel 文件失败:", error);
-          setErrorMessage("解析 Excel 文件失败，请检查文件格式");
+          setSuccessMessage(
+            `成功导入 ${importedRows.length} 行数据，共 ${headers.length} 个列。${newColumnsInfo}`
+          );
+          setSuccessDialogOpen(true);
+        } else {
+          setErrorMessage(
+            "没有找到可导入的数据。请检查Excel文件是否包含数据行。"
+          );
           setErrorDialogOpen(true);
         }
-      };
-      
-      reader.onerror = () => {
-        setErrorMessage("读取文件失败");
+      } catch (err) {
+        const msg =
+          err instanceof ExcelParseError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "解析 Excel 文件失败，请检查文件格式";
+        if (msg.includes("xlsx")) {
+          setErrorMessage("请先安装 xlsx 库：pnpm add xlsx");
+        } else {
+          setErrorMessage(msg);
+        }
         setErrorDialogOpen(true);
-      };
-      
-      reader.readAsArrayBuffer(file);
-    } catch (error) {
-      console.error("导入 xlsx 库失败:", error);
-      setErrorMessage("请先安装 xlsx 库：pnpm add xlsx");
-      setErrorDialogOpen(true);
-    }
-  }, [table, rows, onImportRows, onImportColumns]);
+      }
+    },
+    [table, rows, onImportRows, onImportColumns]
+  );
 
   // 判断单个条件是否满足
   const checkCondition = useCallback((row: TableRowType, condition: FilterCondition): boolean => {
@@ -836,38 +753,40 @@ export function SpreadsheetTableView({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* 工具栏 */}
-      <div className="flex items-center gap-2 p-2 border-b bg-muted/50 shrink-0">
-        <Button size="sm" variant="outline" onClick={onAddRow}>
-          <Plus className="h-4 w-4 mr-1" />
-          添加记录
+      {/* 工具栏 - 响应式 */}
+      <div className="flex flex-wrap items-center gap-2 p-2 sm:p-3 border-b bg-muted/50 shrink-0">
+        <Button size="sm" variant="outline" onClick={onAddRow} className="gap-1.5 shrink-0">
+          <Plus className="h-4 w-4" />
+          <span className="hidden sm:inline">添加记录</span>
         </Button>
         {onUndo && (
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={onUndo}
             disabled={!canUndo}
             title="撤销 (Ctrl+Z)"
+            className="shrink-0"
           >
-            <Undo2 className="h-4 w-4 mr-1" />
-            撤销
+            <Undo2 className="h-4 w-4" />
+            <span className="hidden sm:inline">撤销</span>
           </Button>
         )}
         {onRedo && (
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={onRedo}
             disabled={!canRedo}
             title="重做 (Ctrl+Y)"
+            className="shrink-0"
           >
-            <Redo2 className="h-4 w-4 mr-1" />
-            重做
+            <Redo2 className="h-4 w-4" />
+            <span className="hidden sm:inline">重做</span>
           </Button>
         )}
         {/* 行高控制 */}
-        <div className="flex items-center gap-2 ml-2">
+        <div className="flex items-center gap-2 ml-0 sm:ml-2 shrink-0">
           <span className="text-sm text-muted-foreground">行高:</span>
           <Select value={rowHeight} onValueChange={(value: "low" | "medium" | "high") => setRowHeight(value)}>
             <SelectTrigger className="w-24 h-8">
@@ -881,30 +800,30 @@ export function SpreadsheetTableView({
           </Select>
         </div>
         {/* 保存按钮 - 一直存在 */}
-        <div className="flex items-center gap-2 ml-auto">
-          {/* 筛选按钮 */}
+        <div className="flex flex-wrap items-center gap-2 ml-auto">
           <Button
             size="sm"
             variant={filterGroups.length > 0 ? "default" : "outline"}
             onClick={() => setShowFilterPanel(!showFilterPanel)}
-            className="gap-2"
+            className="gap-1.5 shrink-0"
           >
             <Filter className="h-4 w-4" />
-            筛选
+            <span className="hidden sm:inline">筛选</span>
             {filterGroups.length > 0 && (
-              <span className="ml-1 bg-primary-foreground text-primary px-1.5 py-0.5 rounded text-xs">
+              <span className="bg-primary-foreground text-primary px-1.5 py-0.5 rounded text-xs">
                 {filterGroups.reduce((sum, g) => sum + g.conditions.length, 0)}
               </span>
             )}
           </Button>
           {onImportRows && (
-            <Button 
-              size="sm" 
-              variant="outline" 
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => setImportDialogOpen(true)}
+              className="shrink-0"
             >
-              <Upload className="h-4 w-4 mr-1" />
-              导入 Excel
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">导入 Excel</span>
             </Button>
           )}
           {onSave && (
@@ -912,10 +831,10 @@ export function SpreadsheetTableView({
               size="sm"
               onClick={onSave}
               disabled={saving || !hasUnsavedChanges}
-              className="gap-2"
+              className="gap-1.5 shrink-0"
             >
               <Save className="h-4 w-4" />
-              {saving ? "保存中..." : "保存"}
+              <span className="hidden sm:inline">{saving ? "保存中..." : "保存"}</span>
             </Button>
           )}
         </div>
@@ -1096,8 +1015,10 @@ export function SpreadsheetTableView({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex-1 truncate">{col.label}</span>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                        <ResponsiveMenu
+                          open={columnMenuOpen === col.key}
+                          onOpenChange={(open) => setColumnMenuOpen(open ? col.key : null)}
+                          trigger={
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1106,30 +1027,15 @@ export function SpreadsheetTableView({
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onEditColumn(col.key);
-                              }}
-                            >
-                              <Pencil className="h-4 w-4 mr-2" />
-                              编辑
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setColumnToDelete({ key: col.key, label: col.label });
-                                setDeleteColumnDialogOpen(true);
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              删除
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                          }
+                          title={`列: ${col.label}`}
+                          align="end"
+                          stopPropagation
+                          items={[
+                            { icon: <Pencil className="h-4 w-4" />, label: "编辑", onClick: () => onEditColumn(col.key) },
+                            { icon: <Trash2 className="h-4 w-4" />, label: "删除", onClick: () => { setColumnToDelete({ key: col.key, label: col.label }); setDeleteColumnDialogOpen(true); }, variant: "destructive" },
+                          ]}
+                        />
                       </div>
                       {/* 列宽调整手柄 */}
                       <div
@@ -1176,8 +1082,7 @@ export function SpreadsheetTableView({
                   )}
                 </tr>
               ) : (() => {
-                // 应用筛选条件并过滤掉已标记删除的行
-                const visibleRows = filteredRows.filter(row => !(row as any)._deleted);
+                const visibleRows = filterNonDeletedRows(filteredRows);
                 return visibleRows.length === 0 ? (
                   <tr>
                     <td colSpan={table.columns.length + 1} className="border border-border p-8 text-center text-muted-foreground">
@@ -1263,7 +1168,7 @@ export function SpreadsheetTableView({
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-destructive/10 bg-background/90 shadow-sm"
+                            className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-destructive/10 focus:text-destructive focus-visible:text-destructive focus-visible:ring-destructive/50 bg-background/90 shadow-sm [&_svg]:text-destructive [&_svg]:hover:text-destructive focus:[&_svg]:text-destructive focus-visible:[&_svg]:text-destructive"
                             onClick={(e) => {
                               e.stopPropagation();
                               onDeleteRow(row);
@@ -1312,7 +1217,7 @@ export function SpreadsheetTableView({
 
       {/* 删除列确认对话框 */}
       <Dialog open={deleteColumnDialogOpen} onOpenChange={setDeleteColumnDialogOpen}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
           <DialogHeader>
             <DialogTitle>确认删除列</DialogTitle>
             <DialogDescription>
@@ -1348,7 +1253,7 @@ export function SpreadsheetTableView({
       {/* Excel 导入对话框 */}
       {onImportRows && (
         <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[85dvh] sm:max-h-[90vh] mx-auto">
             <DialogHeader>
               <DialogTitle>导入 Excel 文件</DialogTitle>
               <DialogDescription>
@@ -1435,7 +1340,7 @@ export function SpreadsheetTableView({
 
       {/* 错误提示对话框 */}
       <Dialog open={errorDialogOpen} onOpenChange={setErrorDialogOpen}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
           <DialogHeader>
             <DialogTitle>错误</DialogTitle>
             <DialogDescription>
@@ -1452,7 +1357,7 @@ export function SpreadsheetTableView({
 
       {/* 成功提示对话框 */}
       <Dialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg mx-auto">
           <DialogHeader>
             <DialogTitle>导入成功</DialogTitle>
             <DialogDescription className="whitespace-pre-line">

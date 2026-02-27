@@ -16,7 +16,7 @@ class Logger {
   /**
    * Debug 日志（仅开发环境）
    */
-  debug(message: string, ...args: any[]): void {
+  debug(message: string, ...args: unknown[]): void {
     if (this.isDevelopment) {
       console.debug(`[DEBUG] ${message}`, ...args);
     }
@@ -25,7 +25,7 @@ class Logger {
   /**
    * Info 日志
    */
-  info(message: string, ...args: any[]): void {
+  info(message: string, ...args: unknown[]): void {
     if (this.isDevelopment) {
       console.info(`[INFO] ${message}`, ...args);
     }
@@ -34,14 +34,14 @@ class Logger {
   /**
    * Warning 日志
    */
-  warn(message: string, ...args: any[]): void {
+  warn(message: string, ...args: unknown[]): void {
     console.warn(`[WARN] ${message}`, ...args);
   }
 
   /**
    * Error 日志（始终记录）
    */
-  error(message: string, error?: unknown, ...args: any[]): void {
+  error(message: string, error?: unknown, ...args: unknown[]): void {
     console.error(`[ERROR] ${message}`, error, ...args);
     
     // TODO: 可以在这里集成错误追踪服务（如 Sentry）
@@ -71,7 +71,7 @@ class Logger {
   /**
    * 表格日志（仅开发环境）
    */
-  table(data: any): void {
+  table(data: unknown): void {
     if (this.isDevelopment) {
       console.table(data);
     }

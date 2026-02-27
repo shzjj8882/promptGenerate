@@ -16,6 +16,18 @@ export interface LayoutItem {
   static?: boolean;
   /** 多维表格组件：绑定的表格 ID */
   tableId?: string;
+  /** 多维表格组件：在控制台展示的列 key 列表（空则展示全部） */
+  columnKeys?: string[];
+  /** 多维表格组件：展示模式（表格 或 图表） */
+  tableDisplayMode?: "table" | "chart";
+  /** 多维表格组件：图表模式下的图表类型 */
+  tableChartType?: "bar" | "pie" | "line";
+  /** 多维表格组件：图表模式下的分类列 key */
+  tableChartCategoryColumnKey?: string;
+  /** 多维表格组件：图表模式下的数值列 key 列表 */
+  tableChartValueColumnKeys?: string[];
+  /** 多维表格组件：图表模式下的饼图聚合方式 */
+  tableChartPieAggregate?: "sum" | "count";
 }
 
 /** 工作台配置响应 */

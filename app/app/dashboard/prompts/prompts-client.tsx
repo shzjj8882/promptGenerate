@@ -8,7 +8,7 @@ import {
   useHasMenuButtonPermission,
   useHasButtonPermission,
 } from "@/lib/permissions";
-import { PromptDebugDialog } from "./components/prompt-debug-dialog";
+import { PromptPlaceholderDebugDialog } from "./components/prompt-placeholder-debug-dialog";
 import { PromptFilters } from "./components/prompt-filters";
 import { PromptFormDialog } from "./components/prompt-form-dialog";
 import { SceneCreateDialog } from "./components/scene-create-dialog";
@@ -417,15 +417,14 @@ function PromptsClientImpl({ initialTenants, initialPrompts }: PromptsClientProp
         />
       )}
 
-      {/* 调试对话框 */}
+      {/* 占位符调试对话框（仅占位符转换，不调用 LLM） */}
       {isMounted && (
-        <PromptDebugDialog
+        <PromptPlaceholderDebugDialog
           open={isDebugDialogOpen}
           onOpenChange={setIsDebugDialogOpen}
           prompt={debuggingPrompt}
           tenants={tenants}
           placeholders={placeholders}
-          isMounted={isMounted}
         />
       )}
     </div>

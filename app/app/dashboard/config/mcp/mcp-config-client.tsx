@@ -80,7 +80,7 @@ function MCPConfigClientImpl() {
   const fetchConfigs = async () => {
     try {
       setLoading(true);
-      const response = await getMCPConfigs({ limit: 1000 });
+      const response = await getMCPConfigs({ limit: 200 });
       setConfigs(response.items);
     } catch (error) {
       handleError(error, "加载 MCP 列表失败");
@@ -484,14 +484,15 @@ function MCPConfigClientImpl() {
 
       {/* 新建对话框 */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
             <DialogTitle>新建 MCP</DialogTitle>
             <DialogDescription>
               配置 MCP 服务，创建前需验证连接并获取工具列表
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+          <div className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="name">MCP 名称 *</Label>
               <Input
@@ -595,7 +596,8 @@ function MCPConfigClientImpl() {
               </div>
             )}
           </div>
-          <DialogFooter>
+          </div>
+          <DialogFooter className="shrink-0 px-6 py-4 border-t">
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               取消
             </Button>

@@ -17,9 +17,31 @@ function DashboardPageImpl() {
     dashboardStore.setLayout(layout);
   }, []);
 
-  const handleUpdateTableConfig = useCallback((widgetId: string, tableId: string) => {
-    dashboardStore.updateWidgetConfig(widgetId, { tableId });
-  }, []);
+  const handleUpdateTableConfig = useCallback(
+    (
+      widgetId: string,
+      config: {
+        tableId: string;
+        columnKeys?: string[];
+        displayMode?: "table" | "chart";
+        chartType?: "bar" | "pie" | "line";
+        chartCategoryColumnKey?: string;
+        chartValueColumnKeys?: string[];
+        chartPieAggregate?: "sum" | "count";
+      }
+    ) => {
+      dashboardStore.updateWidgetConfig(widgetId, {
+        tableId: config.tableId,
+        columnKeys: config.columnKeys,
+        tableDisplayMode: config.displayMode,
+        tableChartType: config.chartType,
+        tableChartCategoryColumnKey: config.chartCategoryColumnKey,
+        tableChartValueColumnKeys: config.chartValueColumnKeys,
+        tableChartPieAggregate: config.chartPieAggregate,
+      });
+    },
+    []
+  );
 
   const handleDrop = useCallback(
     (layout: readonly LayoutItem[], item: LayoutItem | undefined, e: Event) => {

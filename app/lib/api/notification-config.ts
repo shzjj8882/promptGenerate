@@ -127,16 +127,32 @@ export async function updateNotificationConfig(
   return result.data;
 }
 
-/**
- * 使用传入配置测试发送邮件（编辑时使用当前表单数据）
- */
-export async function testEmailWithConfig(params: {
-  api_user: string;
-  api_key: string;
+/** 邮件服务类型 */
+export type EmailProvider = "sendcloud" | "smtp";
+
+/** 测试邮件内容格式（仅测试时可选） */
+export type TestEmailContentType = "html" | "plain" | "file";
+
+/** 测试邮件请求参数 */
+export interface TestEmailWithConfigParams {
+  provider?: EmailProvider;
+  api_user?: string;
+  api_key?: string;
+  host?: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  use_tls?: boolean;
   from_email: string;
   from_name?: string;
   email_to: string;
-}): Promise<{ message: string }> {
+  content_type?: TestEmailContentType;
+}
+
+/**
+ * 使用传入配置测试发送邮件（编辑时使用当前表单数据）
+ */
+export async function testEmailWithConfig(params: TestEmailWithConfigParams): Promise<{ message: string }> {
   const url = buildApiUrl("/admin/notification-config/test-email-with-config");
   const token = getAuthToken();
 
@@ -148,16 +164,28 @@ export async function testEmailWithConfig(params: {
     headers.Authorization = `Bearer ${token}`;
   }
 
+  const body: Record<string, unknown> = {
+    provider: params.provider ?? "sendcloud",
+    from_email: params.from_email,
+    from_name: params.from_name ?? "",
+    email_to: params.email_to,
+    content_type: params.content_type ?? "html",
+  };
+  if (params.provider === "smtp") {
+    body.host = params.host ?? "";
+    body.port = params.port ?? 587;
+    body.username = params.username ?? "";
+    body.password = params.password ?? "";
+    body.use_tls = params.use_tls ?? true;
+  } else {
+    body.api_user = params.api_user ?? "";
+    body.api_key = params.api_key ?? "";
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      api_user: params.api_user,
-      api_key: params.api_key,
-      from_email: params.from_email,
-      from_name: params.from_name ?? "",
-      email_to: params.email_to,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -174,7 +202,8 @@ export async function testEmailWithConfig(params: {
  */
 export async function testEmailNotification(
   configId: string,
-  emailTo: string
+  emailTo: string,
+  contentType: TestEmailContentType = "html"
 ): Promise<{ message: string }> {
   const url = buildApiUrl(`/admin/notification-config/${configId}/test-email`);
   const token = getAuthToken();
@@ -190,7 +219,7 @@ export async function testEmailNotification(
   const response = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ email_to: emailTo }),
+    body: JSON.stringify({ email_to: emailTo, content_type: contentType }),
   });
 
   if (!response.ok) {

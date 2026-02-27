@@ -79,7 +79,7 @@ export const PromptCard = memo(function PromptCard({
               variant="outline"
               size="sm"
               onClick={() => onDebug(prompt)}
-              title="调试提示词"
+              title="占位符调试（仅转换占位符，不调用 LLM）"
             >
               <Bug className="mr-2 h-4 w-4" />
               调试

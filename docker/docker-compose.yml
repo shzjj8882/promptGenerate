@@ -89,6 +89,40 @@ services:
       timeout: 5s
       retries: 2
       start_period: 40s
+    volumes:
+      - ../.cursor:/app/.cursor
+    networks:
+      - aily_network
+    restart: unless-stopped
+
+  # LLMChat 异步任务 Worker（消费 Redis Stream，执行任务并发邮件）
+  llmchat_worker:
+    build:
+      context: ..
+      dockerfile: docker/service/Dockerfile
+    container_name: aily_llmchat_worker
+    command: ["python3", "scripts/llmchat_worker.py"]
+    working_dir: /app
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-aily_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_BASE: ${DEEPSEEK_API_BASE:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+    volumes:
+      - ../.cursor:/app/.cursor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - aily_network
     restart: unless-stopped

@@ -77,7 +77,7 @@ export function useUsers({
     if (loadingAllRolesRef.current) return;
     try {
       loadingAllRolesRef.current = true;
-      const response = await getRoles({ skip: 0, limit: 1000 });
+      const response = await getRoles({ skip: 0, limit: 500 });
       setAllRolesForUser(response.items);
     } catch (err) {
       logger.error("加载角色列表失败", err);

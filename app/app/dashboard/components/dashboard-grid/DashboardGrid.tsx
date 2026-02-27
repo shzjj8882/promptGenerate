@@ -35,8 +35,8 @@ interface DashboardGridProps {
   layout: LayoutItem[];
   onLayoutChange: (layout: LayoutItem[]) => void;
   onRemove: (id: string) => void;
-  /** 更新表格组件的表格配置 */
-  onUpdateTableConfig?: (widgetId: string, tableId: string) => void;
+  /** 更新多维表格组件的配置（含表格/图表模式） */
+  onUpdateTableConfig?: (widgetId: string, config: import("../dashboard-widgets/WidgetTables").WidgetTablesConfig) => void;
   loading?: boolean;
   /** 是否处于配置中（配置中可拖拽、缩放、删除，非配置中仅展示） */
   isConfiguring?: boolean;
@@ -116,10 +116,16 @@ export function DashboardGrid({
 
         if (type === "tables") {
           return (
-            <div key={item.i} className="min-h-0">
+            <div key={item.i} className="min-h-0 h-full">
               <WidgetTables
                 {...common}
                 tableId={item.tableId}
+                columnKeys={item.columnKeys}
+                tableDisplayMode={item.tableDisplayMode}
+                tableChartType={item.tableChartType}
+                tableChartCategoryColumnKey={item.tableChartCategoryColumnKey}
+                tableChartValueColumnKeys={item.tableChartValueColumnKeys}
+                tableChartPieAggregate={item.tableChartPieAggregate}
                 onUpdateTable={isConfiguring ? onUpdateTableConfig : undefined}
               />
             </div>

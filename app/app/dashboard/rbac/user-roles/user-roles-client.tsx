@@ -488,14 +488,15 @@ function UserRolesClientImpl(props: UserRolesClientProps = {}) {
             }
           }}
         >
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-            <DialogHeader>
+          <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+            <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
               <DialogTitle>为用户分配角色</DialogTitle>
               <DialogDescription>
                 为用户 <span className="font-semibold">{editingUser?.username}</span> 分配角色
               </DialogDescription>
             </DialogHeader>
 
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 custom-scrollbar">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>用户信息</Label>
@@ -554,19 +555,19 @@ function UserRolesClientImpl(props: UserRolesClientProps = {}) {
                   {userRoleError}
                 </div>
               )}
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsUserRoleDialogOpen(false)}
-                >
-                  取消
-                </Button>
-                <Button onClick={handleSubmitUserRoles}>
-                  保存
-                </Button>
-              </div>
+            </div>
+            </div>
+            <div className="shrink-0 px-6 py-4 border-t flex flex-row items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsUserRoleDialogOpen(false)}
+              >
+                取消
+              </Button>
+              <Button onClick={handleSubmitUserRoles}>
+                保存
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

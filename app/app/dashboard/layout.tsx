@@ -1,7 +1,6 @@
 "use client";
 
 import React, { ReactNode, useState, useEffect, useMemo } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -44,6 +43,7 @@ import {
 } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { uiStore } from "@/store/ui-store";
+import { dashboardStore } from "@/store/dashboard-store";
 import { userStore } from "@/store/user-store";
 import { logout, getCurrentUser } from "@/lib/api/auth";
 import { getAuthToken } from "@/lib/api/config";
@@ -56,6 +56,7 @@ import { DashboardConfigPanel } from "./components/dashboard-config-panel/Dashbo
 const PATH_TO_MENU_CODE: Record<string, string> = {
   "/dashboard/tenants": "menu:tenant:list",
   "/dashboard/prompts": "menu:prompts:list",
+  "/dashboard/compositions": "menu:compositions:list",
   "/dashboard/teams": "menu:teams:list",
   "/dashboard/rbac": "team_admin", // 保留旧路径的兼容性
   "/dashboard/rbac/roles": "menu:rbac:roles:list",
@@ -108,18 +109,7 @@ function userHasMenuCode(user: { is_superuser?: boolean; is_team_admin?: boolean
   return !!user.menu_permission_codes?.includes(code);
 }
 
-/** 侧栏导航仅客户端渲染，服务端与首帧统一用占位，避免 user/localStorage 导致 hydration 不匹配 */
-const DashboardNav = dynamic(
-  () => import("@/components/shared/dashboard-nav").then((m) => m.DashboardNav),
-  {
-    ssr: false,
-    loading: () => (
-      <nav className="mt-2 space-y-1 px-2 text-sm" aria-label="主导航">
-        <div className="rounded-md px-3 py-2 text-xs text-zinc-500" aria-hidden>&nbsp;</div>
-      </nav>
-    ),
-  }
-);
+import { DashboardNav } from "@/components/shared/dashboard-nav";
 
 // 避免在开发模式下 React StrictMode 导致 /me 请求触发两次
 let didFetchCurrentUser = false;
@@ -326,6 +316,17 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
     };
   }
   
+  // 组合页
+  if (pathname.startsWith("/dashboard/compositions")) {
+    return {
+      title: "组合",
+      crumbs: [
+        { label: "工作台", href: "/dashboard" },
+        { label: "组合" },
+      ],
+    };
+  }
+
   // 处理动态路由：/dashboard/tables/[id] - 表格详情页
   const tablesDetailMatch = pathname.match(/^\/dashboard\/tables\/([^/]+)$/);
   if (tablesDetailMatch) {
@@ -387,6 +388,7 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
       const menuNameMap: Record<string, string> = {
         "menu:tenant:list": "租户管理",
         "menu:prompts:list": "提示词管理",
+        "menu:compositions:list": "组合",
         "menu:rbac": "权限管理",
         "menu:config": "配置中心",
         "menu:config:scenes": "场景配置",
@@ -450,12 +452,14 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   // 页面加载/刷新时：并行请求用户信息和菜单树（优化首次加载速度）
+  // 注意：didFetchCurrentUser 必须在确认有 token 后再置 true，否则用户从未登录→登录后首次进入 dashboard 时
+  // 会因之前无 token 时已置 true 而跳过请求，导致菜单为空（刷新后模块重载才恢复）
   useEffect(() => {
     if (didFetchCurrentUser) return;
-    didFetchCurrentUser = true;
-
     const t = getAuthToken();
     if (!t) return;
+
+    didFetchCurrentUser = true;
     
     // 并行执行用户信息和菜单树查询，提升首次加载速度
     const fetchUserInfo = getCurrentUser()
@@ -598,7 +602,18 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => uiStore.toggleDashboardConfig()}
+                onClick={async () => {
+                  if (uiStore.dashboardConfigMode) {
+                    try {
+                      await dashboardStore.saveConfig();
+                      uiStore.toggleDashboardConfig();
+                    } catch {
+                      // 保存失败时留在配置模式，错误已由 store 记录
+                    }
+                  } else {
+                    uiStore.toggleDashboardConfig();
+                  }
+                }}
                 className={cn("gap-2", uiStore.dashboardConfigMode && "bg-muted")}
               >
                 {uiStore.dashboardConfigMode ? (
@@ -679,9 +694,9 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
           </SheetContent>
         </Sheet>
 
-        {/* 工作台首页：内容直接在最外层，背景和边距与 main 一致 */}
+        {/* 工作台首页：内容直接在最外层，背景和边距与 main 一致，允许滚动 */}
         {pathname === "/dashboard" ? (
-          <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-muted/30 p-4 dark:bg-background">
+          <div className="flex flex-1 flex-col min-w-0 overflow-y-auto overflow-x-hidden bg-muted/30 p-4 dark:bg-background custom-scrollbar">
             {requiredMenuCode != null && !canAccessCurrentRoute ? (
               <div className="flex flex-1 items-center justify-center text-muted-foreground">
                 {token && userStore.user === null ? "加载中..." : "正在跳转..."}
@@ -692,8 +707,8 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
           </div>
         ) : (
           /* 其他页面：main + 面包屑 + card 包裹 */
-          <main className="flex flex-1 flex-col overflow-hidden bg-muted/30 p-4 dark:bg-background">
-            <div className="mb-4 hidden sm:block">
+          <main className="flex flex-1 flex-col min-h-0 overflow-hidden bg-muted/30 p-4 dark:bg-background">
+            <div className="mb-4 hidden sm:block shrink-0">
               <Breadcrumb>
                 <BreadcrumbList>
                   {meta.crumbs.map((c, idx) => {
@@ -717,7 +732,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
               </Breadcrumb>
             </div>
             <div className={cn(
-              "flex flex-1 flex-col rounded-lg bg-card border border-border p-6 shadow-md w-full",
+              "flex flex-1 flex-col min-h-0 rounded-lg bg-card border border-border p-6 shadow-md w-full",
               pathname && /^\/dashboard\/tables\/[^/]+/.test(pathname)
                 ? "overflow-hidden"
                 : "overflow-auto custom-scrollbar"
