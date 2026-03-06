@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_dashboard_config import UserDashboardConfig
+from app.models.system_dashboard_config import SystemDashboardConfig
 from app.schemas.user_dashboard_config import DashboardConfigUpdate
 from app.core.cache import (
     get_cache,
@@ -15,9 +16,29 @@ from app.core.cache import (
 )
 from app.utils.json_utils import dumps as json_dumps, loads as json_loads
 
+SYSTEM_CONFIG_CACHE_KEY = f"{CACHE_KEY_PREFIXES['dashboard_config']}__system__"
+
 
 def _cache_key(user_id: str) -> str:
     return f"{CACHE_KEY_PREFIXES['dashboard_config']}{user_id}"
+
+
+async def get_system_config(db: AsyncSession) -> SystemDashboardConfig | None:
+    """获取系统工作台配置（超级管理员）"""
+    result = await db.execute(select(SystemDashboardConfig).limit(1))
+    return result.scalar_one_or_none()
+
+
+async def get_or_create_system_config(db: AsyncSession) -> SystemDashboardConfig:
+    """获取或创建系统工作台配置"""
+    cfg = await get_system_config(db)
+    if cfg is not None:
+        return cfg
+    cfg = SystemDashboardConfig(layout=[])
+    db.add(cfg)
+    await db.commit()
+    await db.refresh(cfg)
+    return cfg
 
 
 async def get_config(db: AsyncSession, user_id: str) -> UserDashboardConfig | None:
@@ -59,6 +80,37 @@ async def get_config_cached(db: AsyncSession, user_id: str):
         await set_cache(cache_key, json_dumps(layout), CACHE_TTL["dashboard_config"])
     except Exception:
         pass
+    return cfg
+
+
+async def get_system_config_cached(db: AsyncSession):
+    """获取系统工作台配置（带缓存，超级管理员用）"""
+    from types import SimpleNamespace
+
+    cached = await get_cache(SYSTEM_CONFIG_CACHE_KEY)
+    if cached:
+        try:
+            layout = json_loads(cached)
+            return SimpleNamespace(layout=layout or [])
+        except Exception:
+            pass
+
+    cfg = await get_or_create_system_config(db)
+    layout = cfg.layout or []
+    try:
+        await set_cache(SYSTEM_CONFIG_CACHE_KEY, json_dumps(layout), CACHE_TTL["dashboard_config"])
+    except Exception:
+        pass
+    return cfg
+
+
+async def save_system_config(db: AsyncSession, data: DashboardConfigUpdate) -> SystemDashboardConfig:
+    """保存系统工作台配置"""
+    cfg = await get_or_create_system_config(db)
+    cfg.layout = data.layout
+    await db.commit()
+    await db.refresh(cfg)
+    await delete_cache(SYSTEM_CONFIG_CACHE_KEY)
     return cfg
 
 

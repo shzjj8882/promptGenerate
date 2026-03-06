@@ -65,6 +65,8 @@ class TeamService:
             name=team_data.name,
             description=team_data.description,
             authcode=authcode,
+            plan_expire_at=team_data.plan_expire_at,
+            monthly_token_limit=team_data.monthly_token_limit,
         )
         db.add(team)
         try:
@@ -90,6 +92,10 @@ class TeamService:
             team.name = team_data.name
         if team_data.is_active is not None:
             team.is_active = team_data.is_active
+        if team_data.plan_expire_at is not None:
+            team.plan_expire_at = team_data.plan_expire_at
+        if team_data.monthly_token_limit is not None:
+            team.monthly_token_limit = team_data.monthly_token_limit
         
         try:
             await db.commit()

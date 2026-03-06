@@ -6,6 +6,8 @@ class UiStore {
   dashboardConfigMode = false;
   /** 配置侧边栏是否展开（仅配置中有效） */
   dashboardConfigSidebarOpen = true;
+  /** 是否临时锁定工作台拖拽（例如弹窗打开时避免“穿透”拖动卡片） */
+  dashboardDragLocked = false;
 
   constructor() {
     makeAutoObservable(this);
@@ -45,6 +47,10 @@ class UiStore {
 
   toggleDashboardConfigSidebar() {
     this.dashboardConfigSidebarOpen = !this.dashboardConfigSidebarOpen;
+  }
+
+  setDashboardDragLocked(value: boolean) {
+    this.dashboardDragLocked = value;
   }
 }
 

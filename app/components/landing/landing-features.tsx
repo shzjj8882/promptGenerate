@@ -5,7 +5,7 @@ import {
   Shield,
   Layers,
   Mail,
-} from "lucide-react";
+} from "@/components/icons";
 import { LandingAnimateIn } from "./landing-animate-in";
 
 const features = [

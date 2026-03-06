@@ -34,10 +34,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Plus,
-  Settings2,
-} from "lucide-react";
+import { Plus, Settings2 } from "@/components/icons";
 import { Tenant } from "@/lib/api/tenants";
 import { MENU_BUTTON_PERMISSIONS, useHasMenuButtonPermission } from "@/lib/permissions";
 import { Pagination } from "@/components/ui/pagination";
@@ -127,8 +124,7 @@ function TenantsClientImpl({
       return;
     }
     fetchTenants(currentPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, initialTenants, initialPage]);
+  }, [currentPage, initialTenants, initialPage, fetchTenants]);
 
   const columns = useMemo<ColumnDef<Tenant>[]>(
     () => [

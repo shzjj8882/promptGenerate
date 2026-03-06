@@ -1,8 +1,24 @@
 /**
  * 菜单配置：菜单 code 到路径和图标的映射
+ * 图标统一使用 IconPark
  */
-import { Building2, BookOpenText, MessageSquareText, Shield, Users, Settings, Layers, FileText, Table, UserCog, Menu, Cpu, Plug, Mail, Puzzle } from "lucide-react";
-import { LucideIcon } from "lucide-react";
+import {
+  Building2,
+  Message,
+  Shield,
+  People,
+  Settings2,
+  Layers,
+  FileText,
+  Table,
+  Menu,
+  Cpu,
+  Plug,
+  Mail,
+  Puzzle,
+} from "@/components/icons";
+
+type MenuIconType = React.ComponentType<{ className?: string; size?: string | number }>;
 
 /**
  * 菜单 code 到路径的映射
@@ -29,16 +45,16 @@ export const MENU_CODE_TO_HREF: Record<string, string> = {
 /**
  * 菜单 code 到图标的映射
  */
-export const MENU_CODE_TO_ICON: Record<string, LucideIcon> = {
+export const MENU_CODE_TO_ICON: Record<string, MenuIconType> = {
   "menu:tenant:list": Building2,
-  "menu:teams:list": Users,
-  "menu:prompts:list": MessageSquareText,
+  "menu:teams:list": People,
+  "menu:prompts:list": Message,
   "menu:compositions:list": Puzzle,
   "menu:rbac": Shield,
-  "menu:rbac:roles:list": Users,
-  "menu:rbac:user_roles:list": UserCog,
+  "menu:rbac:roles:list": People,
+  "menu:rbac:user_roles:list": People,
   "menu:rbac:menus:list": Menu,
-  "menu:config": Settings,
+  "menu:config": Settings2,
   "menu:config:scenes": Layers,
   "menu:config:placeholders": FileText,
   "menu:config:tables": Table,
@@ -51,7 +67,7 @@ export const MENU_CODE_TO_ICON: Record<string, LucideIcon> = {
 /**
  * 默认图标（当找不到对应图标时使用）
  */
-export const DEFAULT_MENU_ICON = Settings;
+export const DEFAULT_MENU_ICON = Settings2;
 
 /**
  * 根据菜单 code 获取路径
@@ -63,6 +79,6 @@ export function getMenuHref(code: string): string {
 /**
  * 根据菜单 code 获取图标
  */
-export function getMenuIcon(code: string): LucideIcon {
+export function getMenuIcon(code: string): MenuIconType {
   return MENU_CODE_TO_ICON[code] || DEFAULT_MENU_ICON;
 }

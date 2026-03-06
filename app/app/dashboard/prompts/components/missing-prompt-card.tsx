@@ -1,9 +1,11 @@
 "use client";
 
 import { memo } from "react";
-import { Shield, Building2, Pencil } from "lucide-react";
+import { Shield, Building2, Pencil } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { TYPOGRAPHY } from "@/lib/design-tokens";
 import { getSceneLabel } from "../utils/prompt-utils";
 import type { PromptScene, Tenant } from "../prompts-client";
 
@@ -38,7 +40,7 @@ export const MissingPromptCard = memo(function MissingPromptCard({
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 space-y-3">
           <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-muted-foreground">{sceneLabel}</h3>
+            <h3 className={TYPOGRAPHY.cardTitle}>{sceneLabel}</h3>
             <div className="flex items-center gap-2">
               {tenantId === "default" ? (
                 <Badge variant="outline" className="border-blue-300">
@@ -58,7 +60,7 @@ export const MissingPromptCard = memo(function MissingPromptCard({
           </div>
 
           <div>
-            <p className="line-clamp-3 text-sm italic text-muted-foreground">
+            <p className={cn(TYPOGRAPHY.cardSubtitle, "line-clamp-3 italic")}>
               暂无默认提示词
             </p>
           </div>

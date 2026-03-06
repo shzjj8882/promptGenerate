@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDebounce } from "@/hooks/use-debounce";
 import {
   getCompositions,
   createComposition,
@@ -19,6 +20,7 @@ export function useCompositions() {
   const [loading, setLoading] = useState(true);
   const loadingRef = useRef(false);
   const [searchKeyword, setSearchKeyword] = useState("");
+  const debouncedSearchKeyword = useDebounce(searchKeyword, 300);
   const pageRef = useRef(1);
   const keywordRef = useRef("");
 
@@ -31,7 +33,7 @@ export function useCompositions() {
   } = usePagination({ initialPage: 1, pageSize: DEFAULT_PAGE_SIZE, initialTotal: 0 });
 
   pageRef.current = currentPage;
-  keywordRef.current = searchKeyword;
+  keywordRef.current = debouncedSearchKeyword;
 
   const { handleError } = useErrorHandler({ showToast: true });
 
@@ -104,5 +106,6 @@ export function useCompositions() {
     totalPages,
     searchKeyword,
     setSearchKeyword,
+    debouncedSearchKeyword,
   };
 }

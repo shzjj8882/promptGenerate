@@ -5,7 +5,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { queryTableRowsByConditions } from "@/lib/api/multi-dimension-tables";
-import { buildCurlCommand, getCurlBaseUrl } from "@/lib/utils/curl";
+import { buildCurlCommandForApi, getCurlBaseUrl } from "@/lib/utils/curl";
+import { userStore } from "@/store/user-store";
 import type {
   MultiDimensionTable,
   TableRow,
@@ -106,26 +107,16 @@ export function useRowQuery({ table, open }: UseRowQueryOptions) {
   }, [table?.id, getValidConditions, logic, limitOne]);
 
   const getCurlCommand = useCallback((): string | null => {
-    if (!table?.id) return null;
-    const validConditions = getValidConditions();
-    if (validConditions.length === 0) return null;
+    if (!table?.code) return null;
 
     const baseUrl = getCurlBaseUrl();
-    const url = `${baseUrl}/admin/multi-dimension-tables/${table.id}/rows/query-by-conditions`;
-    return buildCurlCommand({
-      method: "POST",
+    const url = `${baseUrl}/api/multi-dimension-tables/${table.code}/rows`;
+    return buildCurlCommandForApi({
+      method: "GET",
       url,
-      body: {
-        conditions: validConditions.map((c) => ({
-          column_key: c.column_key,
-          operator: c.operator ?? "equals",
-          value: String(c.value).trim(),
-        })),
-        logic,
-        limit: limitOne ? 1 : undefined,
-      },
+      teamAuthcode: userStore.user?.team_authcode,
     });
-  }, [table?.id, getValidConditions, logic, limitOne]);
+  }, [table?.code]);
 
   const handleCopyCurl = useCallback(async () => {
     const cmd = getCurlCommand();

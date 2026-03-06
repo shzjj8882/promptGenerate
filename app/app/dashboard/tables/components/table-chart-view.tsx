@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon, Settings2 } from "lucide-react";
+import { BarChart3, PieChartIcon, LineChartIcon, Settings2 } from "@/components/icons";
 import {
   Popover,
   PopoverContent,
@@ -372,7 +372,7 @@ function TableChartViewImpl({
               radius={compact ? 0.7 : 0.75}
               innerRadius={compact ? 0.4 : 0.5}
               label={{
-                type: "outer",
+                position: "outside",
                 content: (datum: { name: string; percent?: number }) =>
                   `${datum.name} ${((datum.percent ?? 0) * 100).toFixed(0)}%`,
               }}
@@ -398,7 +398,7 @@ function TableChartViewImpl({
               seriesField="type"
               color={colorPalette}
               legend={{ position: "top" }}
-              padding={[24, 8, 8, 8]}
+              padding={[24, 8, 8, 44]}
               axis={{
                 x: { title: false },
                 y: { title: false },
@@ -420,7 +420,7 @@ function TableChartViewImpl({
               group
               color={colorPalette}
               legend={{ position: "top" }}
-              padding={[24, 8, 8, 8]}
+              padding={[24, 8, 8, 44]}
               axis={{
                 x: { title: false },
                 y: { title: false },

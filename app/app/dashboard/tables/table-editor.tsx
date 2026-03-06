@@ -1,48 +1,45 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { observer } from "mobx-react-lite";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, X, Save, Undo2, Redo2, ArrowLeft } from "lucide-react";
+import { History, LayoutGrid } from "@/components/icons";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  loadHiddenColumnsFromStorage,
+  saveHiddenColumnsToStorage,
+} from "@/app/dashboard/config/tables/components/table-canvas-constants";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  getTables,
   getTable,
   updateTable,
-  createTableRow,
-  updateTableRow,
-  deleteTableRow,
-  deleteTableRowByCondition,
-  updateTableRowByCondition,
   type MultiDimensionTable,
   type TableRow as TableRowType,
   type TableColumn,
   type TableRowBulkData,
+  getTableCompletedHistory,
+  type CompletedHistoryApiEntry,
 } from "@/lib/api/multi-dimension-tables";
 import { filterNonDeletedRows } from "@/lib/utils/table-rows";
 import { useErrorHandler } from "@/hooks/use-error-handler";
-import { CanvasSpreadsheetTableView } from "@/app/dashboard/config/tables/canvas-spreadsheet-table-view";
-import { RowRecordDialog, type RowRecordDialogMode } from "./components/row-record-dialog";
-import { RowConditionDialog, type RowConditionDialogMode } from "./components/row-condition-dialog";
+import { useUndoRedoShortcuts } from "@/hooks/use-undo-redo-shortcuts";
+const TableCanvasView = dynamic(
+  () =>
+    import("@/app/dashboard/config/tables/components/table-canvas-view").then((m) => ({
+      default: m.TableCanvasView,
+    })),
+  { ssr: false }
+);
+import { RowRecordDialog } from "./components/row-record-dialog";
+import { RowConditionDialog } from "./components/row-condition-dialog";
 import { RowQueryDialog } from "./components/row-query-dialog";
-import { DatePicker, DATE_FORMATS } from "@/components/ui/date-picker";
-import { Checkbox } from "@/components/ui/checkbox";
+import { TableEditorHistorySidebar } from "./components/table-editor-history-sidebar";
+import { TableEditorAddColumnDialog } from "./components/table-editor-add-column-dialog";
+import { TableEditorEditColumnDialog } from "./components/table-editor-edit-column-dialog";
+import { TableEditorColumnVisibilitySheet } from "./components/table-editor-column-visibility-sheet";
+import type { HistoryState, CompletedHistoryEntry } from "./table-editor-types";
+import { useTableEditorHistory } from "./hooks/use-table-editor-history";
+import { useTableColumnActions } from "./hooks/use-table-column-actions";
+import { useTableRowActions } from "./hooks/use-table-row-actions";
 
 interface TableEditorProps {
   tableId: string;
@@ -54,120 +51,134 @@ interface TableEditorProps {
 function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }: TableEditorProps) {
   const [table, setTable] = useState<MultiDimensionTable | null>(initialTable || null);
   const [loading, setLoading] = useState(!initialTable);
-  const [tableRows, setTableRows] = useState<TableRowType[]>(initialRows || []);
   const [loadingRows, setLoadingRows] = useState(false);
-  
-  // 本地编辑状态
   const [localRows, setLocalRows] = useState<TableRowType[]>(initialRows || []);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  // 撤销/重做历史记录
-  type HistoryState = {
-    rows: TableRowType[];
-    columns: TableColumn[];
-  };
-  const [history, setHistory] = useState<HistoryState[]>([]);
-  const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const historyIndexRef = useRef<number>(-1); // 使用 ref 存储最新的 historyIndex，避免闭包问题
-  const [isUndoRedo, setIsUndoRedo] = useState(false);
-  const historyInitializedRef = useRef<boolean>(false); // 标记历史记录是否已初始化
-  
-  // 同步 historyIndex 到 ref
-  useEffect(() => {
-    historyIndexRef.current = historyIndex;
-  }, [historyIndex]);
-  
-  // 添加列对话框状态
-  const [isAddColumnDialogOpen, setIsAddColumnDialogOpen] = useState(false);
-  const [newColumnKey, setNewColumnKey] = useState("");
-  const [newColumnLabel, setNewColumnLabel] = useState("");
-  const [newColumnType, setNewColumnType] = useState<string>("text");
-  const [newColumnOptions, setNewColumnOptions] = useState<Array<{key: string, value: string}>>([]);
-  const [newColumnDateFormat, setNewColumnDateFormat] = useState<string>("YYYY/MM/DD");
-  const [newColumnDefaultValue, setNewColumnDefaultValue] = useState<string>("");
-  
-  // 编辑列对话框状态
-  const [isEditColumnDialogOpen, setIsEditColumnDialogOpen] = useState(false);
-  const [editingColumnKey, setEditingColumnKey] = useState<string>("");
-  const [editingColumnLabel, setEditingColumnLabel] = useState("");
-  const [editingColumnType, setEditingColumnType] = useState<string>("text");
-  const [editingColumnOptions, setEditingColumnOptions] = useState<Array<{key: string, value: string}>>([]);
-  const [editingColumnDateFormat, setEditingColumnDateFormat] = useState<string>("YYYY/MM/DD");
-  const [editingColumnDefaultValue, setEditingColumnDefaultValue] = useState<string>("");
+  const [historySidebarOpen, setHistorySidebarOpen] = useState(false);
+  const [historySidebarTab, setHistorySidebarTab] = useState<"session" | "completed">("session");
+  const [completedHistory, setCompletedHistory] = useState<CompletedHistoryEntry[]>([]);
+  const completedHistoryFetchedForTableIdRef = useRef<string | null>(null);
 
-  // 添加/编辑/删除记录对话框
-  const [rowRecordDialogOpen, setRowRecordDialogOpen] = useState(false);
-  const [rowRecordDialogMode, setRowRecordDialogMode] = useState<RowRecordDialogMode>("add");
-  const [rowRecordDialogRow, setRowRecordDialogRow] = useState<TableRowType | null>(null);
-
-  // 按条件编辑/删除对话框
-  const [rowConditionDialogOpen, setRowConditionDialogOpen] = useState(false);
-  const [rowConditionDialogMode, setRowConditionDialogMode] = useState<RowConditionDialogMode>("edit_by_condition");
-  const [rowQueryDialogOpen, setRowQueryDialogOpen] = useState(false);
+  /** 隐藏列（仅前端展示，存 localStorage，按 tableId 区分） */
+  const [hiddenColumnKeys, setHiddenColumnKeys] = useState<string[]>([]);
+  const [columnVisibilitySheetOpen, setColumnVisibilitySheetOpen] = useState(false);
 
   const { handleError } = useErrorHandler({
     showToast: true,
   });
+  /** 供 hooks 使用：hook 的 message 为可选，此处补默认值以匹配 useErrorHandler 的签名 */
+  const handleErrorForHooks = useCallback(
+    (error: unknown, message?: string) => {
+      handleError(error, message ?? "操作失败");
+    },
+    [handleError]
+  );
 
-  // 辅助函数：将日期字符串从旧格式转换为新格式
-  const convertDateFormat = (dateValue: string, oldFormat: string, newFormat: string): string => {
-    if (!dateValue) return "";
-    
-    try {
-      let date: Date | null = null;
-      date = new Date(dateValue);
-      if (!isNaN(date.getTime())) {
-        const year = date.getFullYear();
-        if (year >= 1900 && year <= 2100) {
-          const formatOption = DATE_FORMATS.find(f => f.value === newFormat);
-          if (formatOption) {
-            return formatOption.format(date);
-          }
-        }
-      }
-      
-      const patterns = [
-        /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/,
-        /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/,
-      ];
-      
-      for (const pattern of patterns) {
-        const match = dateValue.match(pattern);
-        if (match) {
-          let year: number, month: number, day: number;
-          
-          if (pattern === patterns[0]) {
-            year = parseInt(match[1], 10);
-            month = parseInt(match[2], 10) - 1;
-            day = parseInt(match[3], 10);
-          } else {
-            if (oldFormat === "DD/MM/YYYY") {
-              day = parseInt(match[1], 10);
-              month = parseInt(match[2], 10) - 1;
-              year = parseInt(match[3], 10);
-            } else {
-              month = parseInt(match[1], 10) - 1;
-              day = parseInt(match[2], 10);
-              year = parseInt(match[3], 10);
-            }
-          }
-          
-          date = new Date(year, month, day);
-          if (!isNaN(date.getTime())) {
-            const formatOption = DATE_FORMATS.find(f => f.value === newFormat);
-            if (formatOption) {
-              return formatOption.format(date);
-            }
-          }
-        }
-      }
-      
-      return dateValue;
-    } catch {
-      return dateValue;
-    }
-  };
+  const {
+    history,
+    setHistory,
+    historyIndex,
+    setHistoryIndex,
+    historyIndexRef,
+    historyInitializedRef,
+    recordHistory,
+    handleUndo,
+    handleRedo,
+    handleRollbackToHistoryIndex,
+    handleRollbackToCompleted,
+    initializeHistory,
+  } = useTableEditorHistory({
+    table,
+    setTable,
+    setLocalRows,
+    setHasUnsavedChanges,
+    onRollback: () => setHistorySidebarOpen(false),
+  });
+
+  useEffect(() => {
+    historyIndexRef.current = historyIndex;
+  }, [historyIndex, historyIndexRef]);
+
+  const {
+    isAddColumnDialogOpen,
+    setIsAddColumnDialogOpen,
+    addColumnInsertPosition,
+    setAddColumnInsertPosition,
+    addColumnCopyFromKey,
+    setAddColumnCopyFromKey,
+    newColumnKey,
+    setNewColumnKey,
+    newColumnLabel,
+    setNewColumnLabel,
+    newColumnType,
+    setNewColumnType,
+    newColumnOptions,
+    setNewColumnOptions,
+    newColumnDateFormat,
+    setNewColumnDateFormat,
+    newColumnDefaultValue,
+    setNewColumnDefaultValue,
+    isEditColumnDialogOpen,
+    setIsEditColumnDialogOpen,
+    editingColumnKey,
+    editingColumnLabel,
+    setEditingColumnLabel,
+    editingColumnType,
+    setEditingColumnType,
+    editingColumnOptions,
+    setEditingColumnOptions,
+    editingColumnDateFormat,
+    setEditingColumnDateFormat,
+    editingColumnDefaultValue,
+    setEditingColumnDefaultValue,
+    handleAddColumn,
+    handleSaveColumn,
+    handleDeleteColumn,
+    handleReorderColumns,
+    handleInsertColumnLeft,
+    handleInsertColumnRight,
+    handleCopyColumn,
+    handleEditColumn,
+    handleSaveEditColumn,
+  } = useTableColumnActions({
+    table,
+    setTable,
+    localRows,
+    setLocalRows,
+    setHasUnsavedChanges,
+    recordHistory,
+    handleError: handleErrorForHooks,
+  });
+
+  const {
+    rowRecordDialogOpen,
+    setRowRecordDialogOpen,
+    rowRecordDialogMode,
+    rowRecordDialogRow,
+    rowConditionDialogOpen,
+    setRowConditionDialogOpen,
+    rowConditionDialogMode,
+    rowQueryDialogOpen,
+    setRowQueryDialogOpen,
+    handleCellChange,
+    handleOpenEditRecordDialog,
+    handleRowRecordSubmit,
+    handleCreateRow,
+    handleDeleteRow,
+    handleOpenEditByConditionDialog,
+    handleOpenDeleteByConditionDialog,
+    handleOpenQueryByConditionDialog,
+    handleRowConditionSubmit,
+  } = useTableRowActions({
+    table,
+    localRows,
+    setLocalRows,
+    setHasUnsavedChanges,
+    recordHistory,
+    handleError: handleErrorForHooks,
+  });
 
   const fetchTableRows = useCallback(async (tableId: string, options?: { resetHistory?: boolean }) => {
     if (!tableId) return;
@@ -175,27 +186,52 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
       setLoadingRows(true);
       const tableData = await getTable(tableId, true);
       const data = tableData.rows || [];
-      setTableRows(data);
       setLocalRows(data);
       setHasUnsavedChanges(false);
       // 编辑后刷新时同步更新 table 对象，确保列定义等元数据一致
       setTable((prev) => (prev ? { ...prev, ...tableData, rows: data } : prev));
       if (options?.resetHistory) {
-        const initialState: HistoryState = {
-          rows: JSON.parse(JSON.stringify(data)),
-          columns: JSON.parse(JSON.stringify(tableData.columns || [])),
-        };
-        setHistory([initialState]);
-        setHistoryIndex(0);
-        historyIndexRef.current = 0;
-        historyInitializedRef.current = true;
+        initializeHistory(data, tableData.columns || []);
       }
     } catch (error) {
       handleError(error, "加载表格行数据失败");
     } finally {
       setLoadingRows(false);
     }
-  }, [handleError]);
+  }, [handleError, initializeHistory]);
+
+  const mapApiHistoryToEntry = useCallback((api: CompletedHistoryApiEntry): CompletedHistoryEntry => {
+    const timestamp = api.created_at ? new Date(api.created_at).getTime() : Date.now();
+    const dateKey = api.created_at ? api.created_at.slice(0, 10) : new Date(timestamp).toISOString().slice(0, 10);
+    const snapshot: HistoryState = {
+      rows: api.snapshot.rows,
+      columns: api.snapshot.columns,
+      stepLabel: api.snapshot.stepLabel,
+      stepType: api.snapshot.stepType as any,
+      stepTitle: api.snapshot.stepTitle,
+      stepDescription: api.snapshot.stepDescription,
+    };
+    return {
+      id: api.id,
+      dateKey,
+      timestamp,
+      snapshot,
+      label: api.label,
+    };
+  }, []);
+
+  const fetchCompletedHistory = useCallback(
+    async (tableIdToLoad: string) => {
+      try {
+        const items = await getTableCompletedHistory(tableIdToLoad, 100);
+        setCompletedHistory(items.map(mapApiHistoryToEntry));
+      } catch (error) {
+        // 历史记录加载失败不影响主流程
+        console.error("加载已完成历史记录失败", error);
+      }
+    },
+    [mapApiHistoryToEntry]
+  );
 
   const fetchTableData = useCallback(async () => {
     if (!tableId) return;
@@ -205,161 +241,63 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
       const tableData = await getTable(tableId, true);
       setTable(tableData);
       const rowsData = tableData.rows || [];
-      setTableRows(rowsData);
       setLocalRows(rowsData);
-      
-      // 初始化历史记录
-      const initialState: HistoryState = {
-        rows: JSON.parse(JSON.stringify(rowsData)),
-        columns: JSON.parse(JSON.stringify(tableData.columns || [])),
-      };
-      setHistory([initialState]);
-      setHistoryIndex(0);
+      initializeHistory(rowsData, tableData.columns || []);
       setHasUnsavedChanges(false);
     } catch (error) {
       handleError(error, "加载表格失败");
     } finally {
       setLoading(false);
     }
-  }, [tableId, handleError]);
+  }, [tableId, handleError, initializeHistory]);
 
   // 初始化：如果有初始数据，直接使用；否则从服务端获取
   useEffect(() => {
+    const effectiveTableId = initialTable?.id ?? tableId;
+    if (effectiveTableId && completedHistoryFetchedForTableIdRef.current !== effectiveTableId) {
+      completedHistoryFetchedForTableIdRef.current = effectiveTableId;
+      fetchCompletedHistory(effectiveTableId);
+    }
     if (initialTable && initialRows) {
-      // 使用 SSR 传入的初始数据（只在首次加载时执行）
       if (!table || table.id !== initialTable.id) {
         setTable(initialTable);
-        setTableRows(initialRows);
         setLocalRows(initialRows);
-        
-        // 初始化历史记录
-        const initialState: HistoryState = {
-          rows: JSON.parse(JSON.stringify(initialRows)),
-          columns: JSON.parse(JSON.stringify(initialTable.columns || [])),
-        };
-        setHistory([initialState]);
-        setHistoryIndex(0);
-        historyIndexRef.current = 0;
-        historyInitializedRef.current = true;
+        initializeHistory(initialRows, initialTable.columns || []);
         setHasUnsavedChanges(false);
         setLoading(false);
+      } else if (history.length === 0 || historyIndex < 0) {
+        initializeHistory(initialRows, initialTable.columns || []);
       }
     } else if (!table && tableId) {
-      // 没有初始数据时才请求
       fetchTableData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableId, initialTable?.id]); // 只在 tableId 或 initialTable.id 变化时重新获取
+  }, [tableId, initialTable?.id, table?.id, history.length, historyIndex]);
 
-  // 记录历史状态
-  const recordHistory = useCallback((rows: TableRowType[], columns: TableColumn[]) => {
-    if (isUndoRedo) return;
-    if (!historyInitializedRef.current) return;
-
-    const newState: HistoryState = {
-      rows: JSON.parse(JSON.stringify(rows)),
-      columns: JSON.parse(JSON.stringify(columns)),
-    };
-
-    setHistory(prev => {
-      const currentIndex = historyIndexRef.current;
-      if (prev.length === 0) {
-        const newHistory = [newState];
-        const newIndex = 0;
-        setHistoryIndex(newIndex);
-        historyIndexRef.current = newIndex;
-        return newHistory;
-      }
-      const newHistory = prev.slice(0, currentIndex + 1);
-      newHistory.push(newState);
-      if (newHistory.length > 50) newHistory.shift();
-      const newIndex = newHistory.length - 1;
-      setHistoryIndex(newIndex);
-      historyIndexRef.current = newIndex;
-      return newHistory;
-    });
-  }, [isUndoRedo]);
-
-  // 撤销操作
-  const handleUndo = useCallback(() => {
-    if (historyIndex <= 0 || !table) return;
-    
-    setIsUndoRedo(true);
-    const prevIndex = historyIndex - 1;
-    const prevState = history[prevIndex];
-    
-    if (prevState) {
-      setLocalRows(prevState.rows);
-      setTable({
-        ...table,
-        columns: prevState.columns,
-      });
-      setHistoryIndex(prevIndex);
-      setHasUnsavedChanges(prevIndex !== 0);
-    }
-    
-    setTimeout(() => setIsUndoRedo(false), 0);
-  }, [historyIndex, history, table]);
-
-  // 重做操作
-  const handleRedo = useCallback(() => {
-    if (historyIndex >= history.length - 1 || !table) return;
-    
-    setIsUndoRedo(true);
-    const nextIndex = historyIndex + 1;
-    const nextState = history[nextIndex];
-    
-    if (nextState) {
-      setLocalRows(nextState.rows);
-      setTable({
-        ...table,
-        columns: nextState.columns,
-      });
-      setHistoryIndex(nextIndex);
-      setHasUnsavedChanges(true);
-    }
-    
-    setTimeout(() => setIsUndoRedo(false), 0);
-  }, [historyIndex, history.length, history, table]);
-
-  // 键盘快捷键支持
+  // 隐藏列：从 localStorage 恢复（仅当表格已加载且列存在时）
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
-      
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        if (historyIndex > 0 && !saving) {
-          handleUndo();
-        }
-      }
-      if (((e.ctrlKey || e.metaKey) && e.key === 'y') || 
-          ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z')) {
-        e.preventDefault();
-        if (historyIndex < history.length - 1 && !saving) {
-          handleRedo();
-        }
-      }
-    };
+    if (!table?.id || !table?.columns?.length) return;
+    const saved = loadHiddenColumnsFromStorage(table.id);
+    if (!saved?.length) return;
+    const validKeys = saved.filter((k) => table.columns.some((c) => c.key === k));
+    if (validKeys.length > 0) setHiddenColumnKeys(validKeys);
+  }, [table?.id, table?.columns?.length]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [historyIndex, history.length, saving, handleUndo, handleRedo]);
+  const handleHiddenColumnKeysChange = useCallback(
+    (keys: string[]) => {
+      setHiddenColumnKeys(keys);
+      if (table?.id) saveHiddenColumnsToStorage(table.id, keys);
+    },
+    [table?.id]
+  );
 
-  const handleCellChange = (rowId: string, columnKey: string, value: string) => {
-    if (!table) return;
-    const newRows = localRows.map(r => 
-      r.id === rowId 
-        ? { ...r, cells: { ...r.cells, [columnKey]: value } }
-        : r
-    );
-    setLocalRows(newRows);
-    setHasUnsavedChanges(true);
-    recordHistory(newRows, table.columns);
-  };
+  useUndoRedoShortcuts({
+    canUndo: historyIndex > 0,
+    canRedo: historyIndex < history.length - 1,
+    disabled: saving,
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+  });
 
   // 保存所有更改到后端
   const handleSave = async () => {
@@ -406,20 +344,26 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
         ...table,
         columns: updatedTable.columns || table.columns,
       });
-      setTableRows(savedRows);
       setLocalRows(savedRows);
       setHasUnsavedChanges(false);
-      
-      // 重置历史记录
+
       const newInitialState: HistoryState = {
         rows: JSON.parse(JSON.stringify(savedRows)),
         columns: JSON.parse(JSON.stringify(updatedTable.columns || table.columns)),
       };
+      // 写入「已完成操作」历史
+      const now = Date.now();
+      const dateKey = new Date(now).toISOString().slice(0, 10);
+      setCompletedHistory((prev) => [
+        ...prev,
+        { id: `save-${now}`, dateKey, timestamp: now, snapshot: { ...newInitialState }, label: "保存数据" },
+      ]);
+      // 重置本次会话历史
       setHistory([newInitialState]);
       setHistoryIndex(0);
       historyIndexRef.current = 0;
       historyInitializedRef.current = true;
-      
+
       onTableUpdated?.();
     } catch (error) {
       handleError(error, "保存失败");
@@ -427,100 +371,6 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
       setSaving(false);
     }
   };
-
-  const handleOpenAddRecordDialog = () => {
-    setRowRecordDialogMode("add");
-    setRowRecordDialogRow(null);
-    setRowRecordDialogOpen(true);
-  };
-
-  const handleOpenEditRecordDialog = (row: TableRowType) => {
-    setRowRecordDialogMode("edit");
-    setRowRecordDialogRow(row);
-    setRowRecordDialogOpen(true);
-  };
-
-  const handleOpenDeleteRecordDialog = (row: TableRowType) => {
-    setRowRecordDialogMode("delete");
-    setRowRecordDialogRow(row);
-    setRowRecordDialogOpen(true);
-  };
-
-  const handleRowRecordSubmit = useCallback(
-    async (mode: RowRecordDialogMode, cells?: Record<string, string>) => {
-      if (!table) return;
-
-      try {
-        if (mode === "add" && cells) {
-          await createTableRow(table.id, { cells });
-          await fetchTableRows(table.id, { resetHistory: true });
-          onTableUpdated?.();
-        } else if (mode === "edit" && rowRecordDialogRow && cells) {
-          await updateTableRow(table.id, rowRecordDialogRow.id, { cells });
-          await fetchTableRows(table.id, { resetHistory: true });
-          onTableUpdated?.();
-        } else if (mode === "delete" && rowRecordDialogRow) {
-          await deleteTableRow(table.id, rowRecordDialogRow.id);
-          await fetchTableRows(table.id, { resetHistory: true });
-          setHasUnsavedChanges(false);
-          onTableUpdated?.();
-        }
-      } catch (error) {
-        handleError(error, mode === "add" ? "添加记录失败" : mode === "edit" ? "修改记录失败" : "删除记录失败");
-        throw error;
-      }
-    },
-    [table, rowRecordDialogRow, localRows, fetchTableRows, handleError, onTableUpdated]
-  );
-
-  const handleCreateRow = () => {
-    handleOpenAddRecordDialog();
-  };
-
-  const handleDeleteRow = (row: TableRowType) => {
-    handleOpenDeleteRecordDialog(row);
-  };
-
-  const handleOpenEditByConditionDialog = () => {
-    setRowConditionDialogMode("edit_by_condition");
-    setRowConditionDialogOpen(true);
-  };
-
-  const handleOpenDeleteByConditionDialog = () => {
-    setRowConditionDialogMode("delete_by_condition");
-    setRowConditionDialogOpen(true);
-  };
-
-  const handleOpenQueryByConditionDialog = () => {
-    setRowQueryDialogOpen(true);
-  };
-
-  const handleRowConditionSubmit = useCallback(
-    async (
-      mode: RowConditionDialogMode,
-      condition: { column_key: string; value: string },
-      cells?: Record<string, string>
-    ) => {
-      if (!table) return;
-
-      try {
-        if (mode === "edit_by_condition" && cells) {
-          await updateTableRowByCondition(table.id, { condition, cells });
-        } else if (mode === "delete_by_condition") {
-          await deleteTableRowByCondition(table.id, { condition });
-        }
-        await fetchTableRows(table.id, { resetHistory: true });
-        onTableUpdated?.();
-      } catch (error) {
-        handleError(
-          error,
-          mode === "edit_by_condition" ? "按条件编辑失败" : "按条件删除失败"
-        );
-        throw error;
-      }
-    },
-    [table, fetchTableRows, handleError, onTableUpdated]
-  );
 
   // 处理 Excel 导入时创建新列
   const handleImportColumns = useCallback((newColumns: Array<{ key: string; label: string; type?: string; defaultValue?: string }>, mode: "append" | "replace" = "append") => {
@@ -586,270 +436,36 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
         columns: updatedColumns,
       });
       setLocalRows(newRows);
-      setTableRows(newRows);
-      
-      // 标记为有未保存的更改
       setHasUnsavedChanges(true);
-      recordHistory(newRows, updatedColumns);
+      const addedLabels = tableColumns.map((c) => `key 为 ${c.key} 的列「${c.label}」`).join("、");
+      recordHistory(newRows, updatedColumns, {
+        stepType: "add",
+        stepTitle: "新增列",
+        stepDescription: addedLabels,
+        stepLabel: `新增 ${addedLabels}`,
+      });
     }
   }, [table, localRows, recordHistory]);
 
   // 处理 Excel 导入
   const handleImportRows = useCallback((importedRows: TableRowType[], mode: "append" | "replace" = "append") => {
     if (!table) return;
-    
     let newRows: TableRowType[];
     if (mode === "replace") {
-      // 替换模式：清空现有数据，使用导入的数据
       newRows = importedRows;
     } else {
-      // 追加模式：将导入的行添加到现有数据之后
       newRows = [...localRows, ...importedRows];
     }
-    
     setLocalRows(newRows);
-    setTableRows(newRows);
     setHasUnsavedChanges(true);
-    
-    // 记录历史
-    recordHistory(newRows, table.columns);
+    const modeText = mode === "replace" ? "替换" : "追加";
+    recordHistory(newRows, table.columns, {
+      stepType: "import",
+      stepTitle: "导入数据",
+      stepDescription: `${modeText}，共 ${newRows.length} 条`,
+      stepLabel: `导入数据（${modeText}）`,
+    });
   }, [table, localRows, recordHistory]);
-
-  const handleAddColumn = () => {
-    setNewColumnKey("");
-    setNewColumnLabel("");
-    setNewColumnType("text");
-    setNewColumnOptions([]);
-    setNewColumnDateFormat("YYYY/MM/DD");
-    setNewColumnDefaultValue("");
-    setIsAddColumnDialogOpen(true);
-  };
-
-  const handleSaveColumn = () => {
-    if (!table) return;
-    if (!newColumnKey.trim() || !newColumnLabel.trim()) {
-      handleError(new Error("请填写完整信息"), "请填写列 key 和列名称");
-      return;
-    }
-
-    if (table.columns.some(col => col.key === newColumnKey.trim())) {
-      handleError(new Error("列 key 已存在"), "列 key 不能重复");
-      return;
-    }
-
-    if (newColumnType === "single_select" || newColumnType === "multi_select") {
-      const validOptions = newColumnOptions.filter(opt => opt.value.trim());
-      
-      if (validOptions.length === 0) {
-        handleError(new Error("请至少添加一个选项"), "单选/多选类型需要至少一个选项");
-        return;
-      }
-      
-      const optionValues = validOptions.map(opt => opt.value.trim());
-      const uniqueValues = new Set(optionValues);
-      if (optionValues.length !== uniqueValues.size) {
-        handleError(new Error("选项值不能重复"), "选项值不能重复");
-        return;
-      }
-      
-      if (newColumnDefaultValue.trim()) {
-        if (newColumnType === "single_select") {
-          if (!optionValues.includes(newColumnDefaultValue.trim())) {
-            handleError(new Error("默认值必须在选项中"), "默认值必须在选项列表中");
-            return;
-          }
-        } else if (newColumnType === "multi_select") {
-          const defaultValues = newColumnDefaultValue.split(",").map(v => v.trim()).filter(v => v);
-          const invalidValues = defaultValues.filter(v => !optionValues.includes(v));
-          if (invalidValues.length > 0) {
-            handleError(new Error("默认值中的某些值不在选项中"), `默认值 "${invalidValues.join(", ")}" 不在选项列表中`);
-            return;
-          }
-        }
-      }
-    }
-
-    const newColumn: TableColumn = {
-      key: newColumnKey.trim(),
-      label: newColumnLabel.trim(),
-      type: newColumnType,
-    };
-    
-    const columnOptions: Record<string, any> = {};
-    
-    if (newColumnType === "single_select" || newColumnType === "multi_select") {
-      const validOptions = newColumnOptions.filter(opt => opt.value.trim());
-      columnOptions.options = validOptions.map(opt => opt.value.trim());
-    }
-    
-    if (newColumnType === "date") {
-      columnOptions.format = newColumnDateFormat;
-    }
-    
-    if (newColumnDefaultValue.trim()) {
-      columnOptions.defaultValue = newColumnDefaultValue.trim();
-    }
-    
-    if (Object.keys(columnOptions).length > 0) {
-      newColumn.options = columnOptions;
-    }
-    
-    const updatedColumns = [...table.columns, newColumn];
-    const defaultValue = newColumn.options?.defaultValue || "";
-    const newRows = localRows.map(row => ({
-      ...row,
-      cells: {
-        ...row.cells,
-        [newColumn.key]: defaultValue,
-      },
-    }));
-    
-    setTable({
-      ...table,
-      columns: updatedColumns,
-    });
-    setLocalRows(newRows);
-    setHasUnsavedChanges(true);
-    recordHistory(newRows, updatedColumns);
-    
-    setIsAddColumnDialogOpen(false);
-    setNewColumnKey("");
-    setNewColumnLabel("");
-    setNewColumnType("text");
-  };
-
-  const handleDeleteColumn = (columnKey: string) => {
-    if (!table) return;
-
-    const updatedColumns = table.columns.filter(col => col.key !== columnKey);
-    const newRows = localRows.map(row => {
-      const newCells = { ...row.cells };
-      delete newCells[columnKey];
-      return { ...row, cells: newCells };
-    });
-    
-    setTable({
-      ...table,
-      columns: updatedColumns,
-    });
-    setLocalRows(newRows);
-    setHasUnsavedChanges(true);
-    recordHistory(newRows, updatedColumns);
-  };
-
-  const handleEditColumn = (columnKey: string) => {
-    const column = table?.columns.find(col => col.key === columnKey);
-    if (!column) return;
-    
-    setEditingColumnKey(column.key);
-    setEditingColumnLabel(column.label);
-    setEditingColumnType(column.type || "text");
-    
-    if (column.type === "single_select" || column.type === "multi_select") {
-      const options = column.options?.options || [];
-      setEditingColumnOptions(options.map((opt: string) => ({ key: opt, value: opt })));
-    } else {
-      setEditingColumnOptions([]);
-    }
-    
-    if (column.type === "date") {
-      setEditingColumnDateFormat(column.options?.format || "YYYY/MM/DD");
-    } else {
-      setEditingColumnDateFormat("YYYY/MM/DD");
-    }
-    
-    setEditingColumnDefaultValue(column.options?.defaultValue || "");
-    setIsEditColumnDialogOpen(true);
-  };
-
-  const handleSaveEditColumn = () => {
-    if (!table) return;
-    if (!editingColumnLabel.trim()) {
-      handleError(new Error("请填写列名称"), "列名称不能为空");
-      return;
-    }
-
-    if (editingColumnType === "single_select" || editingColumnType === "multi_select") {
-      const validOptions = editingColumnOptions.filter(opt => opt.value.trim());
-      
-      if (validOptions.length === 0) {
-        handleError(new Error("请至少添加一个选项"), "单选/多选类型需要至少一个选项");
-        return;
-      }
-      
-      const optionValues = validOptions.map(opt => opt.value.trim());
-      const uniqueValues = new Set(optionValues);
-      if (optionValues.length !== uniqueValues.size) {
-        handleError(new Error("选项值不能重复"), "选项值不能重复");
-        return;
-      }
-      
-      if (editingColumnDefaultValue.trim()) {
-        if (editingColumnType === "single_select") {
-          if (!optionValues.includes(editingColumnDefaultValue.trim())) {
-            handleError(new Error("默认值必须在选项中"), "默认值必须在选项列表中");
-            return;
-          }
-        } else if (editingColumnType === "multi_select") {
-          const defaultValues = editingColumnDefaultValue.split(",").map(v => v.trim()).filter(v => v);
-          const invalidValues = defaultValues.filter(v => !optionValues.includes(v));
-          if (invalidValues.length > 0) {
-            handleError(new Error("默认值中的某些值不在选项中"), `默认值 "${invalidValues.join(", ")}" 不在选项列表中`);
-            return;
-          }
-        }
-      }
-    }
-
-    const updatedColumns = table.columns.map(col => {
-      if (col.key === editingColumnKey) {
-        const updatedCol: TableColumn = {
-          ...col,
-          label: editingColumnLabel.trim(),
-          type: editingColumnType,
-        };
-        
-        const columnOptions: Record<string, any> = {};
-        
-        if (editingColumnType === "single_select" || editingColumnType === "multi_select") {
-          const validOptions = editingColumnOptions.filter(opt => opt.value.trim());
-          columnOptions.options = validOptions.map(opt => opt.value.trim());
-        }
-        
-        if (editingColumnType === "date") {
-          columnOptions.format = editingColumnDateFormat;
-        }
-        
-        if (editingColumnDefaultValue.trim()) {
-          columnOptions.defaultValue = editingColumnDefaultValue.trim();
-        }
-        
-        if (Object.keys(columnOptions).length > 0) {
-          updatedCol.options = columnOptions;
-        } else {
-          delete updatedCol.options;
-        }
-        
-        return updatedCol;
-      }
-      return col;
-    });
-    
-    setTable({
-      ...table,
-      columns: updatedColumns,
-    });
-    setHasUnsavedChanges(true);
-    recordHistory(localRows, updatedColumns);
-    
-    setIsEditColumnDialogOpen(false);
-    setEditingColumnKey("");
-    setEditingColumnLabel("");
-    setEditingColumnType("text");
-    setEditingColumnOptions([]);
-    setEditingColumnDateFormat("YYYY/MM/DD");
-    setEditingColumnDefaultValue("");
-  };
 
   if (loading) {
     return (
@@ -858,6 +474,19 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
       </div>
     );
   }
+
+  // 监听用户关闭 Tab / 刷新 / 直接离开页面时的未保存提醒
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [hasUnsavedChanges]);
 
   if (!table) {
     return (
@@ -870,7 +499,7 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
   return (
     <div className="h-full w-full flex flex-col overflow-hidden min-h-0 min-w-0">
       <div className="rounded-lg border bg-card flex flex-col overflow-hidden flex-1 min-h-0 min-w-0">
-        <CanvasSpreadsheetTableView
+        <TableCanvasView
           table={table}
           rows={localRows}
           loading={loadingRows}
@@ -879,6 +508,9 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
           onAddColumn={handleAddColumn}
           onDeleteColumn={handleDeleteColumn}
           onEditColumn={handleEditColumn}
+          onInsertColumnLeft={handleInsertColumnLeft}
+          onInsertColumnRight={handleInsertColumnRight}
+          onCopyColumn={handleCopyColumn}
           onEditRow={handleOpenEditRecordDialog}
           onDeleteRow={handleDeleteRow}
           onEditByCondition={handleOpenEditByConditionDialog}
@@ -893,6 +525,32 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
           hasUnsavedChanges={hasUnsavedChanges}
           onImportRows={handleImportRows}
           onImportColumns={handleImportColumns}
+          onReorderColumns={handleReorderColumns}
+          hiddenColumnKeys={hiddenColumnKeys.length > 0 ? hiddenColumnKeys : undefined}
+          toolbarExtraLeftOfSave={
+            <>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => setColumnVisibilitySheetOpen(true)}
+                className="shrink-0"
+                title="设置列"
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => setHistorySidebarOpen(true)}
+                className="shrink-0"
+                title="历史记录"
+              >
+                <History className="h-4 w-4" />
+              </Button>
+            </>
+          }
         />
       </div>
 
@@ -922,506 +580,69 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
         </>
       )}
 
-      {/* 添加列对话框 */}
-      <Dialog open={isAddColumnDialogOpen} onOpenChange={setIsAddColumnDialogOpen}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[85dvh] sm:max-h-[90vh] mx-auto overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>添加列</DialogTitle>
-            <DialogDescription>添加一个新的列到表格中</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="column-key">
-                Key <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="column-key"
-                value={newColumnKey}
-                onChange={(e) => setNewColumnKey(e.target.value)}
-                placeholder="例如: email"
-                className="font-mono"
-              />
-              <p className="text-xs text-muted-foreground">
-                列的唯一标识，创建后不可修改
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="column-label">
-                列名称 <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="column-label"
-                value={newColumnLabel}
-                onChange={(e) => setNewColumnLabel(e.target.value)}
-                placeholder="例如: 邮箱"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="column-type">
-                数据类型 <span className="text-destructive">*</span>
-              </Label>
-              <Select
-                value={newColumnType}
-                onValueChange={(value) => {
-                  setNewColumnType(value);
-                  if (value !== "single_select" && value !== "multi_select") {
-                    setNewColumnOptions([]);
-                  }
-                  if (value !== "date") {
-                    setNewColumnDateFormat("YYYY/MM/DD");
-                  }
-                  setNewColumnDefaultValue("");
-                }}
-              >
-                <SelectTrigger id="column-type" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="w-full">
-                  <SelectItem value="text">文本</SelectItem>
-                  <SelectItem value="number">数字</SelectItem>
-                  <SelectItem value="date">日期</SelectItem>
-                  <SelectItem value="single_select">单选</SelectItem>
-                  <SelectItem value="multi_select">多选</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {(newColumnType === "single_select" || newColumnType === "multi_select") && (
-              <div className="space-y-2">
-                <Label>
-                  选项配置 <span className="text-destructive">*</span>
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  至少需要添加一个选项，选项值不能为空且不能重复
-                </p>
-                <div className="space-y-2 max-h-60 overflow-y-auto border rounded-md p-2">
-                  {newColumnOptions.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-2">
-                      暂无选项，请点击下方按钮添加
-                    </p>
-                  ) : (
-                    newColumnOptions.map((option, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <Input
-                          value={option.value}
-                          onChange={(e) => {
-                            const updated = [...newColumnOptions];
-                            updated[index].value = e.target.value;
-                            setNewColumnOptions(updated);
-                          }}
-                          placeholder={`选项 ${index + 1}`}
-                          className="flex-1"
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setNewColumnOptions(newColumnOptions.filter((_, i) => i !== index));
-                          }}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setNewColumnOptions([...newColumnOptions, { key: "", value: "" }]);
-                    }}
-                    className="w-full"
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    添加选项
-                  </Button>
-                </div>
-              </div>
-            )}
-            
-            {newColumnType === "date" && (
-              <div className="space-y-2">
-                <Label>日期格式</Label>
-                <Select
-                  value={newColumnDateFormat}
-                  onValueChange={(newFormat) => {
-                    if (newColumnDefaultValue) {
-                      const convertedValue = convertDateFormat(
-                        newColumnDefaultValue,
-                        newColumnDateFormat,
-                        newFormat
-                      );
-                      setNewColumnDefaultValue(convertedValue);
-                    }
-                    setNewColumnDateFormat(newFormat);
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="w-full">
-                    {DATE_FORMATS.map((format) => (
-                      <SelectItem key={format.value} value={format.value}>
-                        {format.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            
-            <div className="space-y-2">
-              <Label>默认值</Label>
-              {newColumnType === "date" ? (
-                <DatePicker
-                  value={newColumnDefaultValue}
-                  onChange={(value) => setNewColumnDefaultValue(value)}
-                  format={newColumnDateFormat}
-                  placeholder="选择默认日期"
-                />
-              ) : newColumnType === "single_select" ? (
-                <Select
-                  value={newColumnDefaultValue || "__none__"}
-                  onValueChange={(value) => {
-                    setNewColumnDefaultValue(value === "__none__" ? "" : value);
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择默认值（可选）" />
-                  </SelectTrigger>
-                  <SelectContent className="w-full">
-                    <SelectItem value="__none__">无默认值</SelectItem>
-                    {newColumnOptions
-                      .filter(option => option.value.trim())
-                      .map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.value}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              ) : newColumnType === "multi_select" ? (
-                <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
-                  {newColumnOptions.filter(opt => opt.value.trim()).length === 0 ? (
-                    <p className="text-sm text-muted-foreground">请先配置选项</p>
-                  ) : (
-                    newColumnOptions
-                      .filter(option => option.value.trim())
-                      .map((option) => {
-                        const selectedValues = newColumnDefaultValue ? newColumnDefaultValue.split(",").filter(v => v) : [];
-                        return (
-                          <div key={option.value} className="flex items-center space-x-2">
-                            <Checkbox
-                              checked={selectedValues.includes(option.value)}
-                              onCheckedChange={(checked) => {
-                                let newValues: string[];
-                                if (checked) {
-                                  newValues = [...selectedValues, option.value];
-                                } else {
-                                  newValues = selectedValues.filter(v => v !== option.value);
-                                }
-                                setNewColumnDefaultValue(newValues.join(","));
-                              }}
-                            />
-                            <label className="text-sm cursor-pointer" onClick={() => {
-                              const selectedValues = newColumnDefaultValue ? newColumnDefaultValue.split(",").filter(v => v) : [];
-                              const isChecked = selectedValues.includes(option.value);
-                              let newValues: string[];
-                              if (isChecked) {
-                                newValues = selectedValues.filter(v => v !== option.value);
-                              } else {
-                                newValues = [...selectedValues, option.value];
-                              }
-                              setNewColumnDefaultValue(newValues.join(","));
-                            }}>
-                              {option.value}
-                            </label>
-                          </div>
-                        );
-                      })
-                  )}
-                </div>
-              ) : newColumnType === "number" ? (
-                <Input
-                  type="number"
-                  value={newColumnDefaultValue}
-                  onChange={(e) => setNewColumnDefaultValue(e.target.value)}
-                  placeholder="可选，新建行时自动填充此值"
-                />
-              ) : (
-                <Input
-                  value={newColumnDefaultValue}
-                  onChange={(e) => setNewColumnDefaultValue(e.target.value)}
-                  placeholder="可选，新建行时自动填充此值"
-                />
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setIsAddColumnDialogOpen(false)}
-            >
-              取消
-            </Button>
-            <Button onClick={handleSaveColumn}>
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TableEditorHistorySidebar
+        open={historySidebarOpen}
+        onOpenChange={setHistorySidebarOpen}
+        history={history}
+        historyIndex={historyIndex}
+        completedHistory={completedHistory}
+        tab={historySidebarTab}
+        onTabChange={setHistorySidebarTab}
+        onRollbackToHistoryIndex={handleRollbackToHistoryIndex}
+        onRollbackToCompleted={handleRollbackToCompleted}
+      />
 
-      {/* 编辑列对话框 */}
-      <Dialog open={isEditColumnDialogOpen} onOpenChange={setIsEditColumnDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>编辑列</DialogTitle>
-            <DialogDescription>
-              编辑列的显示名称和数据类型
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-column-key">Key</Label>
-              <Input
-                id="edit-column-key"
-                value={editingColumnKey}
-                disabled
-                className="font-mono bg-muted"
-              />
-              <p className="text-xs text-muted-foreground">
-                列的唯一标识，不可修改
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-column-label">
-                列名称 <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="edit-column-label"
-                value={editingColumnLabel}
-                onChange={(e) => setEditingColumnLabel(e.target.value)}
-                placeholder="例如: 邮箱"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-column-type">
-                数据类型 <span className="text-destructive">*</span>
-              </Label>
-              <Select
-                value={editingColumnType}
-                onValueChange={(value) => {
-                  setEditingColumnType(value);
-                  if (value !== "single_select" && value !== "multi_select") {
-                    setEditingColumnOptions([]);
-                  }
-                  if (value !== "date") {
-                    setEditingColumnDateFormat("YYYY/MM/DD");
-                  }
-                  setEditingColumnDefaultValue("");
-                }}
-              >
-                <SelectTrigger id="edit-column-type" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="w-full">
-                  <SelectItem value="text">文本</SelectItem>
-                  <SelectItem value="number">数字</SelectItem>
-                  <SelectItem value="date">日期</SelectItem>
-                  <SelectItem value="single_select">单选</SelectItem>
-                  <SelectItem value="multi_select">多选</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {(editingColumnType === "single_select" || editingColumnType === "multi_select") && (
-              <div className="space-y-2">
-                <Label>
-                  选项配置 <span className="text-destructive">*</span>
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  至少需要添加一个选项，选项值不能为空且不能重复
-                </p>
-                <div className="space-y-2 max-h-60 overflow-y-auto border rounded-md p-2">
-                  {editingColumnOptions.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-2">
-                      暂无选项，请点击下方按钮添加
-                    </p>
-                  ) : (
-                    editingColumnOptions.map((option, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <Input
-                          value={option.value}
-                          onChange={(e) => {
-                            const updated = [...editingColumnOptions];
-                            updated[index].value = e.target.value;
-                            setEditingColumnOptions(updated);
-                          }}
-                          placeholder={`选项 ${index + 1}`}
-                          className="flex-1"
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setEditingColumnOptions(editingColumnOptions.filter((_, i) => i !== index));
-                          }}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEditingColumnOptions([...editingColumnOptions, { key: "", value: "" }]);
-                    }}
-                    className="w-full"
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    添加选项
-                  </Button>
-                </div>
-              </div>
-            )}
-            
-            {editingColumnType === "date" && (
-              <div className="space-y-2">
-                <Label>日期格式</Label>
-                <Select
-                  value={editingColumnDateFormat}
-                  onValueChange={(newFormat) => {
-                    if (editingColumnDefaultValue) {
-                      const convertedValue = convertDateFormat(
-                        editingColumnDefaultValue,
-                        editingColumnDateFormat,
-                        newFormat
-                      );
-                      setEditingColumnDefaultValue(convertedValue);
-                    }
-                    setEditingColumnDateFormat(newFormat);
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="w-full">
-                    {DATE_FORMATS.map((format) => (
-                      <SelectItem key={format.value} value={format.value}>
-                        {format.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            
-            <div className="space-y-2">
-              <Label>默认值</Label>
-              {editingColumnType === "date" ? (
-                <DatePicker
-                  value={editingColumnDefaultValue}
-                  onChange={(value) => setEditingColumnDefaultValue(value)}
-                  format={editingColumnDateFormat}
-                  placeholder="选择默认日期"
-                />
-              ) : editingColumnType === "single_select" ? (
-                <Select
-                  value={editingColumnDefaultValue || "__none__"}
-                  onValueChange={(value) => {
-                    setEditingColumnDefaultValue(value === "__none__" ? "" : value);
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择默认值（可选）" />
-                  </SelectTrigger>
-                  <SelectContent className="w-full">
-                    <SelectItem value="__none__">无默认值</SelectItem>
-                    {editingColumnOptions
-                      .filter(option => option.value.trim())
-                      .map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.value}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              ) : editingColumnType === "multi_select" ? (
-                <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
-                  {editingColumnOptions.filter(opt => opt.value.trim()).length === 0 ? (
-                    <p className="text-sm text-muted-foreground">请先配置选项</p>
-                  ) : (
-                    editingColumnOptions
-                      .filter(option => option.value.trim())
-                      .map((option) => {
-                        const selectedValues = editingColumnDefaultValue ? editingColumnDefaultValue.split(",").filter(v => v) : [];
-                        return (
-                          <div key={option.value} className="flex items-center space-x-2">
-                            <Checkbox
-                              checked={selectedValues.includes(option.value)}
-                              onCheckedChange={(checked) => {
-                                let newValues: string[];
-                                if (checked) {
-                                  newValues = [...selectedValues, option.value];
-                                } else {
-                                  newValues = selectedValues.filter(v => v !== option.value);
-                                }
-                                setEditingColumnDefaultValue(newValues.join(","));
-                              }}
-                            />
-                            <label className="text-sm cursor-pointer" onClick={() => {
-                              const selectedValues = editingColumnDefaultValue ? editingColumnDefaultValue.split(",").filter(v => v) : [];
-                              const isChecked = selectedValues.includes(option.value);
-                              let newValues: string[];
-                              if (isChecked) {
-                                newValues = selectedValues.filter(v => v !== option.value);
-                              } else {
-                                newValues = [...selectedValues, option.value];
-                              }
-                              setEditingColumnDefaultValue(newValues.join(","));
-                            }}>
-                              {option.value}
-                            </label>
-                          </div>
-                        );
-                      })
-                  )}
-                </div>
-              ) : editingColumnType === "number" ? (
-                <Input
-                  type="number"
-                  value={editingColumnDefaultValue}
-                  onChange={(e) => setEditingColumnDefaultValue(e.target.value)}
-                  placeholder="可选，新建行时自动填充此值"
-                />
-              ) : (
-                <Input
-                  value={editingColumnDefaultValue}
-                  onChange={(e) => setEditingColumnDefaultValue(e.target.value)}
-                  placeholder="可选，新建行时自动填充此值"
-                />
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setIsEditColumnDialogOpen(false)}
-            >
-              取消
-            </Button>
-            <Button onClick={handleSaveEditColumn}>
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TableEditorAddColumnDialog
+        open={isAddColumnDialogOpen}
+        onOpenChange={(open) => {
+          setIsAddColumnDialogOpen(open);
+          if (!open) {
+            setAddColumnInsertPosition(null);
+            setAddColumnCopyFromKey(null);
+          }
+        }}
+        table={table}
+        insertPosition={addColumnInsertPosition}
+        copyFromKey={addColumnCopyFromKey}
+        columnKey={newColumnKey}
+        setColumnKey={setNewColumnKey}
+        label={newColumnLabel}
+        setLabel={setNewColumnLabel}
+        type={newColumnType}
+        setType={setNewColumnType}
+        options={newColumnOptions}
+        setOptions={setNewColumnOptions}
+        dateFormat={newColumnDateFormat}
+        setDateFormat={setNewColumnDateFormat}
+        defaultValue={newColumnDefaultValue}
+        setDefaultValue={setNewColumnDefaultValue}
+        onSubmit={handleSaveColumn}
+      />
+
+      <TableEditorEditColumnDialog
+        open={isEditColumnDialogOpen}
+        onOpenChange={setIsEditColumnDialogOpen}
+        columnKey={editingColumnKey}
+        label={editingColumnLabel}
+        setLabel={setEditingColumnLabel}
+        type={editingColumnType}
+        setType={setEditingColumnType}
+        options={editingColumnOptions}
+        setOptions={setEditingColumnOptions}
+        dateFormat={editingColumnDateFormat}
+        setDateFormat={setEditingColumnDateFormat}
+        defaultValue={editingColumnDefaultValue}
+        setDefaultValue={setEditingColumnDefaultValue}
+        onSubmit={handleSaveEditColumn}
+      />
+
+      <TableEditorColumnVisibilitySheet
+        open={columnVisibilitySheetOpen}
+        onOpenChange={setColumnVisibilitySheetOpen}
+        columns={table?.columns ?? []}
+        hiddenColumnKeys={hiddenColumnKeys}
+        onHiddenColumnKeysChange={handleHiddenColumnKeysChange}
+      />
     </div>
   );
 }

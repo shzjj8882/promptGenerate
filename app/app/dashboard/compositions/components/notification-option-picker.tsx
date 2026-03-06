@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { CircleSlash, FileCode, Paperclip, FileText } from "lucide-react";
+import { CircleSlash, FileCode, Paperclip, FileText } from "@/components/icons";
 import {
   Popover,
   PopoverContent,
@@ -61,7 +61,7 @@ export function NotificationOptionPicker({
         >
           {selected ? (
             <span className="flex items-center gap-2">
-              <selected.icon className={cn("h-4 w-4", selected.isNone ? "text-destructive" : "text-muted-foreground")} />
+              <selected.icon className={cn("h-4 w-4", ("isNone" in selected && selected.isNone) ? "text-destructive" : "text-muted-foreground")} />
               {selected.label}
             </span>
           ) : (

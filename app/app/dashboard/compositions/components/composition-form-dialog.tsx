@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronLeft } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronLeft } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,13 +40,18 @@ import { getMCPConfigsForDebug, getMCPConfig, type MCPConfig, type MCPTool } fro
 import { getTenants, type Tenant as ApiTenant } from "@/lib/api/tenants";
 import { getNotificationConfigsForDebug } from "@/lib/api/notification-config";
 import type { Composition, CompositionCreate, CompositionUpdate } from "@/lib/api/compositions";
+import { ModelLogo } from "@/components/shared/model-logo";
 import { cn } from "@/lib/utils";
 
 type TaskMode = "sync" | "async";
 
 const SELECT_CLASS = "w-full min-w-0";
 
-const STEPS = [
+const STEPS_BASIC = [
+  { key: "basic", title: "基础信息" },
+  { key: "llm", title: "LLM 配置" },
+];
+const STEPS_API = [
   { key: "basic", title: "基础信息" },
   { key: "llm", title: "LLM 配置" },
   { key: "message", title: "消息类型" },
@@ -82,7 +87,6 @@ export function CompositionFormDialog({
   const [mcpToolNames, setMcpToolNames] = useState<string[]>([]);
   const [taskMode, setTaskMode] = useState<TaskMode>("sync");
   const [notificationOption, setNotificationOption] = useState<NotificationOption>("none");
-  const [sortOrder, setSortOrder] = useState(0);
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -157,7 +161,6 @@ export function CompositionFormDialog({
       setMcpToolNames(editing.mcp_tool_names ?? []);
       setTaskMode((editing.task_mode as TaskMode) || "sync");
       setNotificationOption(fromNotificationConfig(editing.notification_config));
-      setSortOrder(editing.sort_order ?? 0);
     } else if (open && !editing) {
       setName("");
       setDescription("");
@@ -168,13 +171,14 @@ export function CompositionFormDialog({
       setMcpToolNames([]);
       setTaskMode("sync");
       setNotificationOption("none");
-      setSortOrder(0);
     }
     setError(null);
   }, [open, editing]);
 
   const currentStep = step;
-  const maxStep = 2;
+  // LLM 消息模式无第三步（消息类型仅接口模式有）
+  const steps = editing?.mode === "api" ? STEPS_API : STEPS_BASIC;
+  const maxStep = steps.length - 1;
   const isLastStep = step === maxStep;
 
   const handleNext = () => {
@@ -245,7 +249,6 @@ export function CompositionFormDialog({
           taskMode === "async" && notificationOption !== "none"
             ? { type: "email", email_content_type: toEmailContentType(notificationOption) ?? "html" }
             : null,
-        sort_order: sortOrder,
       });
       onOpenChange(false);
     } catch (err: unknown) {
@@ -268,7 +271,7 @@ export function CompositionFormDialog({
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); handleSubmit(e); }} className="flex flex-col flex-1 min-h-0 overflow-hidden">
           <div className="flex gap-2 items-center mb-4 overflow-x-auto pb-2">
-            {STEPS.map((s, i) => (
+            {steps.map((s, i) => (
               <div
                 key={s.key}
                 className={cn(
@@ -316,19 +319,6 @@ export function CompositionFormDialog({
                     placeholder="简要描述该组合的用途"
                     className={cn(SELECT_CLASS, "min-h-[72px] resize-none")}
                     disabled={loading}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sort">排序</Label>
-                  <Input
-                    id="sort"
-                    type="number"
-                    min={0}
-                    value={sortOrder}
-                    onChange={(e) => setSortOrder(parseInt(e.target.value, 10) || 0)}
-                    className={SELECT_CLASS}
-                    disabled={loading}
-                    placeholder="数字越小越靠前"
                   />
                 </div>
               </div>
@@ -380,7 +370,7 @@ export function CompositionFormDialog({
                     <SelectContent>
                       {models.map((m) => (
                         <SelectItem key={m.id} value={m.id}>
-                          {m.name}
+                          <ModelLogo provider={m.provider} model={m.model} name={m.name} size={20} showName />
                         </SelectItem>
                       ))}
                     </SelectContent>

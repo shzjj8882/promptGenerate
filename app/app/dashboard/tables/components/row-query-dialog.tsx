@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Copy, Check, Plus, X } from "lucide-react";
+import { Copy, Check, Plus, X } from "@/components/icons";
 import type { MultiDimensionTable } from "@/lib/api/multi-dimension-tables";
 import { useRowQuery } from "../hooks/use-row-query";
 

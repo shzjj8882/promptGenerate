@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "@/components/icons";
 import { useMemo } from "react";
 
 interface SortIconProps {
@@ -11,6 +11,7 @@ interface SortIconProps {
 /**
  * 排序图标组件
  * 用于表格列头的排序状态显示
+ * 图标统一使用 IconPark
  */
 export function SortIcon({ sorted, className = "ml-2 h-4 w-4" }: SortIconProps) {
   const icon = useMemo(() => {

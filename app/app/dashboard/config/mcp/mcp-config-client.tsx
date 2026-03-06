@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { observer } from "mobx-react-lite";
 import type {
   ColumnDef,
@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Settings2, RefreshCw } from "lucide-react";
+import { Plus, Settings2, RefreshCw, ChevronDown, ChevronRight } from "@/components/icons";
 import {
   getMCPConfigs,
   createMCPConfig,
@@ -61,8 +61,6 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { ChevronDown, ChevronRight } from "lucide-react";
-
 function MCPConfigClientImpl() {
   const [configs, setConfigs] = useState<MCPConfig[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,7 +75,7 @@ function MCPConfigClientImpl() {
 
   const { handleError } = useErrorHandler({ showToast: true });
 
-  const fetchConfigs = async () => {
+  const fetchConfigs = useCallback(async () => {
     try {
       setLoading(true);
       const response = await getMCPConfigs({ limit: 200 });
@@ -87,12 +85,12 @@ function MCPConfigClientImpl() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [handleError]);
 
   useEffect(() => {
     setMounted(true);
     fetchConfigs();
-  }, []);
+  }, [fetchConfigs]);
 
   const handleVerify = async () => {
     if (!formData.url?.trim()) {
@@ -435,8 +433,8 @@ function MCPConfigClientImpl() {
                 <TableBody>
                   {table.getRowModel().rows?.length ? (
                     table.getRowModel().rows.map((row) => (
-                      <>
-                        <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
+                      <React.Fragment key={row.id}>
+                        <TableRow data-state={row.getIsSelected() && "selected"}>
                           {row.getVisibleCells()
                             .filter((c) => c.column.id !== "search")
                             .map((cell) => (
@@ -451,22 +449,30 @@ function MCPConfigClientImpl() {
                         {expandedRows.has(row.original.id) &&
                           row.original.tools_cache &&
                           row.original.tools_cache.length > 0 && (
-                            <TableRow>
-                              <TableCell colSpan={6} className="bg-muted/20">
-                                <div className="py-2 pl-4">
-                                  <div className="text-sm font-medium mb-2">工具列表（子功能）</div>
-                                  <div className="flex flex-wrap gap-2">
+                            <TableRow key={`${row.id}-expanded`}>
+                              <TableCell colSpan={6} className="bg-muted/20 align-top">
+                                <div className="py-3 pl-4 pr-4">
+                                  <div className="text-sm font-medium mb-3">工具列表</div>
+                                  <ul className="space-y-2 rounded-md border border-border bg-background overflow-hidden">
                                     {row.original.tools_cache.map((t) => (
-                                      <Badge key={t.name} variant="secondary" className="font-normal">
-                                        {t.title || t.name}: {t.description || "-"}
-                                      </Badge>
+                                      <li
+                                        key={t.name}
+                                        className="flex items-start gap-3 px-3 py-2.5 text-sm border-b border-border last:border-b-0 bg-background"
+                                      >
+                                        <span className="font-medium text-foreground shrink-0 min-w-[8rem]">
+                                          {t.title || t.name}
+                                        </span>
+                                        <span className="text-muted-foreground flex-1 min-w-0">
+                                          {t.description || "—"}
+                                        </span>
+                                      </li>
                                     ))}
-                                  </div>
+                                  </ul>
                                 </div>
                               </TableCell>
                             </TableRow>
                           )}
-                      </>
+                      </React.Fragment>
                     ))
                   ) : (
                     <TableRow>
@@ -617,7 +623,7 @@ function MCPConfigClientImpl() {
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              确定要删除 MCP 配置 "{selectedConfig?.name}" 吗？此操作不可撤销。
+              确定要删除 MCP 配置「{selectedConfig?.name}」吗？此操作不可撤销。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

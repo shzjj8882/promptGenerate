@@ -106,6 +106,33 @@ class MultiDimensionTableRowResponse(BaseModel):
         from_attributes = True
 
 
+class HistoryStateSnapshot(BaseModel):
+    """多维表格已完成历史记录中的快照（与前端 HistoryState 对齐）"""
+    rows: List[MultiDimensionTableRowResponse] = Field(..., description="当时的行数据快照")
+    columns: List[TableColumn] = Field(..., description="当时的列定义快照")
+    stepLabel: Optional[str] = Field(None, description="步骤标签")
+    stepType: Optional[str] = Field(None, description="步骤类型：initial/update/add/delete/import/reorder")
+    stepTitle: Optional[str] = Field(None, description="步骤标题")
+    stepDescription: Optional[str] = Field(None, description="步骤描述")
+
+
+class CompletedHistoryCreate(BaseModel):
+    """创建已完成历史记录的请求模型"""
+    label: str = Field(..., description="展示给用户的标签，如“保存数据”")
+    snapshot: HistoryStateSnapshot = Field(..., description="历史快照（行 + 列）")
+
+
+class CompletedHistoryResponse(BaseModel):
+    """已完成历史记录响应模型"""
+    id: str
+    table_id: str
+    team_id: Optional[str] = None
+    label: str
+    snapshot: HistoryStateSnapshot
+    created_by: Optional[str] = None
+    created_at: datetime
+
+
 class TableSearchRequest(BaseModel):
     """表格搜索请求模型"""
     table_id: str = Field(..., description="表格 ID")

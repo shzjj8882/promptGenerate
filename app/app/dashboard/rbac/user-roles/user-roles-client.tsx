@@ -50,7 +50,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { UserCog, Settings2 } from "lucide-react";
+import { UserCog, Settings2 } from "@/components/icons";
 import { Role } from "@/lib/api/rbac";
 import { getUserRoles, assignRolesToUser, User } from "@/lib/api/users";
 import { MENU_BUTTON_PERMISSIONS, useHasMenuButtonPermission } from "@/lib/permissions";

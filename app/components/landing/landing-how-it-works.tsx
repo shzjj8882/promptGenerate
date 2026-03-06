@@ -1,4 +1,4 @@
-import { Settings, Plug, CheckCircle } from "lucide-react";
+import { Settings, Plug, CheckCircle } from "@/components/icons";
 import { LandingAnimateIn } from "./landing-animate-in";
 
 const steps = [

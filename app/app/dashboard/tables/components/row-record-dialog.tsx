@@ -2,16 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -20,11 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { DatePicker } from "@/components/ui/date-picker";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Copy, Check } from "lucide-react";
-import { buildCurlCommand, getCurlBaseUrl } from "@/lib/utils/curl";
+import { TableColumnFormField } from "@/components/shared/table-column-form-field";
+import { Copy, Check } from "@/components/icons";
+import { buildCurlCommandForApi, getCurlBaseUrl } from "@/lib/utils/curl";
 import type { MultiDimensionTable, TableRow as TableRowType, TableColumn } from "@/lib/api/multi-dimension-tables";
+import { userStore } from "@/store/user-store";
 
 export type RowRecordDialogMode = "add" | "edit" | "delete";
 
@@ -35,89 +26,6 @@ interface RowRecordDialogProps {
   table: MultiDimensionTable;
   row?: TableRowType;
   onSubmit: (mode: RowRecordDialogMode, cells?: Record<string, string>) => void | Promise<void>;
-}
-
-/** 根据列类型渲染表单控件 */
-function renderFormField(
-  col: TableColumn,
-  value: string,
-  onChange: (v: string) => void
-) {
-  const columnType = col.type || "text";
-  const options = col.options?.options || [];
-
-  switch (columnType) {
-    case "number":
-      return (
-        <Input
-          type="number"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={`请输入${col.label}`}
-        />
-      );
-    case "date":
-      return (
-        <DatePicker
-          value={value}
-          onChange={(v) => onChange(v || "")}
-          format={col.options?.format || "YYYY/MM/DD"}
-          className="w-full"
-        />
-      );
-    case "single_select":
-      return (
-        <Select value={value || ""} onValueChange={onChange}>
-          <SelectTrigger>
-            <SelectValue placeholder={`请选择${col.label}`} />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((opt: string) => (
-              <SelectItem key={opt} value={opt}>
-                {opt}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    case "multi_select":
-      const selectedValues = value ? value.split(",").filter((v) => v) : [];
-      return (
-        <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
-          {options.length === 0 ? (
-            <p className="text-sm text-muted-foreground">请先配置列选项</p>
-          ) : (
-            options.map((opt: string) => (
-              <div key={opt} className="flex items-center gap-2">
-                <Checkbox
-                  id={`${col.key}-${opt}`}
-                  checked={selectedValues.includes(opt)}
-                  onCheckedChange={(checked) => {
-                    const next = checked
-                      ? [...selectedValues, opt]
-                      : selectedValues.filter((v) => v !== opt);
-                    onChange(next.join(","));
-                  }}
-                />
-                <Label htmlFor={`${col.key}-${opt}`} className="text-sm font-normal cursor-pointer">
-                  {opt}
-                </Label>
-              </div>
-            ))
-          )}
-        </div>
-      );
-    default:
-      return (
-        <Textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={`请输入${col.label}`}
-          rows={2}
-          className="resize-none"
-        />
-      );
-  }
 }
 
 export function RowRecordDialog({
@@ -131,7 +39,6 @@ export function RowRecordDialog({
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [copiedCurl, setCopiedCurl] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
   const columns = table?.columns || [];
 
   useEffect(() => {
@@ -168,27 +75,32 @@ export function RowRecordDialog({
   }, [mode, formValues, onSubmit, onOpenChange]);
 
   const handleCopyCurl = useCallback(async () => {
-    if (!table?.id) return;
+    if (!table?.code) return;
 
     const baseUrl = getCurlBaseUrl();
+    const basePath = `${baseUrl}/api/multi-dimension-tables/${table.code}/rows`;
+    const teamAuthcode = userStore.user?.team_authcode;
     let curlCommand: string;
 
     if (mode === "add") {
-      curlCommand = buildCurlCommand({
+      curlCommand = buildCurlCommandForApi({
         method: "POST",
-        url: `${baseUrl}/admin/multi-dimension-tables/${table.id}/rows`,
+        url: basePath,
         body: { cells: formValues },
+        teamAuthcode,
       });
     } else if (mode === "edit" && row?.id) {
-      curlCommand = buildCurlCommand({
+      curlCommand = buildCurlCommandForApi({
         method: "PUT",
-        url: `${baseUrl}/admin/multi-dimension-tables/${table.id}/rows/${row.id}`,
+        url: `${basePath}/${row.id}`,
         body: { cells: formValues },
+        teamAuthcode,
       });
     } else if (mode === "delete" && row?.id) {
-      curlCommand = buildCurlCommand({
+      curlCommand = buildCurlCommandForApi({
         method: "DELETE",
-        url: `${baseUrl}/admin/multi-dimension-tables/${table.id}/rows/${row.id}`,
+        url: `${basePath}/${row.id}`,
+        teamAuthcode,
       });
     } else {
       return;
@@ -201,7 +113,7 @@ export function RowRecordDialog({
     } catch {
       // ignore
     }
-  }, [table?.id, mode, row?.id, formValues]);
+  }, [table?.code, mode, row?.id, formValues]);
 
   const title =
     mode === "add" ? "添加记录" : mode === "edit" ? "修改记录" : "删除记录";
@@ -239,11 +151,11 @@ export function RowRecordDialog({
             {columns.map((col) => (
               <div key={col.key} className="space-y-2">
                 <Label htmlFor={col.key}>{col.label}</Label>
-                {renderFormField(
-                  col,
-                  formValues[col.key] ?? "",
-                  (v) => setFormValues((prev) => ({ ...prev, [col.key]: v }))
-                )}
+                <TableColumnFormField
+                  column={col}
+                  value={formValues[col.key] ?? ""}
+                  onChange={(v) => setFormValues((prev) => ({ ...prev, [col.key]: v }))}
+                />
               </div>
             ))}
           </div>

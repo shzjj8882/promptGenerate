@@ -200,9 +200,9 @@ export function useSceneManagement({
       setNewSceneName("");
       setSelectedPlaceholderKeys(new Set());
       setIsCreateSceneDialogOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error("创建场景失败", error);
-      handleCreateSceneError(error, error?.message || "创建场景失败，请稍后重试");
+      handleCreateSceneError(error, error instanceof Error ? error.message : "创建场景失败，请稍后重试");
     } finally {
       setCreatingScene(false);
     }
@@ -230,7 +230,7 @@ export function useSceneManagement({
       const currentPlaceholders = currentPlaceholdersResponse.items || currentPlaceholdersResponse;
       // 确保 currentPlaceholders 是数组
       const placeholdersArray = Array.isArray(currentPlaceholders) ? currentPlaceholders : [];
-      const currentKeys = new Set(placeholdersArray.map((p: any) => p.key));
+      const currentKeys = new Set(placeholdersArray.map((p: Placeholder) => p.key));
       setEditSelectedPlaceholderKeys(currentKeys);
     } catch (error) {
       logger.error("加载占位符失败", error);
@@ -287,9 +287,9 @@ export function useSceneManagement({
       setSceneToEdit(null);
       setEditSceneName("");
       setEditSelectedPlaceholderKeys(new Set());
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error("编辑场景失败", error);
-      handleEditSceneError(error, error?.message || "编辑场景失败，请稍后重试");
+      handleEditSceneError(error, error instanceof Error ? error.message : "编辑场景失败，请稍后重试");
     } finally {
       setIsEditingScene(false);
     }
@@ -337,9 +337,9 @@ export function useSceneManagement({
       // 关闭对话框
       setIsDeleteSceneDialogOpen(false);
       setSceneToDelete(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error("删除场景失败", error);
-      handleDeleteSceneError(error, error?.message || "删除场景失败，请稍后重试");
+      handleDeleteSceneError(error, error instanceof Error ? error.message : "删除场景失败，请稍后重试");
     } finally {
       setDeletingScene(false);
     }

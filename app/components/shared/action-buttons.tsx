@@ -9,7 +9,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Pencil, Trash2, MoreHorizontal } from "lucide-react";
+
+function isSeparator(action: NonNullable<ActionButtonsProps["additionalActions"]>[number]): action is { type: "separator" } {
+  return typeof action === "object" && "type" in action && action.type === "separator";
+}
+import { Pencil, Trash2, MoreHorizontal } from "@/components/icons";
 import { ReactNode } from "react";
 
 interface ActionButtonsProps {
@@ -20,13 +24,16 @@ interface ActionButtonsProps {
   deleteLoading?: boolean;
   variant?: "dropdown" | "inline";
   size?: "sm" | "default";
-  additionalActions?: Array<{
-    label: string;
-    icon?: ReactNode;
-    onClick: () => void;
-    variant?: "default" | "destructive";
-    disabled?: boolean;
-  }>;
+  additionalActions?: Array<
+    | {
+        label: string;
+        icon?: ReactNode;
+        onClick: () => void;
+        variant?: "default" | "destructive";
+        disabled?: boolean;
+      }
+    | { type: "separator" }
+  >;
 }
 
 /**
@@ -77,23 +84,25 @@ export const ActionButtons = memo(function ActionButtons({
             删除
           </Button>
         )}
-        {additionalActions.map((action, index) => (
-          <Button
-            key={index}
-            variant="ghost"
-            size={size}
-            onClick={action.onClick}
-            disabled={action.disabled}
-            className={
-              action.variant === "destructive"
-                ? "h-8 px-3 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                : "h-8 px-3 hover:bg-primary/10"
-            }
-          >
-            {action.icon && <span className="mr-1.5">{action.icon}</span>}
-            {action.label}
-          </Button>
-        ))}
+        {additionalActions
+          .filter((a): a is Exclude<NonNullable<ActionButtonsProps["additionalActions"]>[number], { type: "separator" }> => !isSeparator(a))
+          .map((action, index) => (
+            <Button
+              key={index}
+              variant="ghost"
+              size={size}
+              onClick={action.onClick}
+              disabled={action.disabled}
+              className={
+                action.variant === "destructive"
+                  ? "h-8 px-3 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  : "h-8 px-3 hover:bg-primary/10"
+              }
+            >
+              {action.icon && <span className="mr-1.5">{action.icon}</span>}
+              {action.label}
+            </Button>
+          ))}
       </div>
     );
   }
@@ -109,16 +118,20 @@ export const ActionButtons = memo(function ActionButtons({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {additionalActions.map((action, index) => (
-            <DropdownMenuItem
-              key={index}
-              onClick={action.onClick}
-              disabled={action.disabled}
-            >
-              {action.icon && <span className="mr-2">{action.icon}</span>}
-              {action.label}
-            </DropdownMenuItem>
-          ))}
+          {additionalActions.map((action, index) =>
+            isSeparator(action) ? (
+              <DropdownMenuSeparator key={index} />
+            ) : (
+              <DropdownMenuItem
+                key={index}
+                onClick={action.onClick}
+                disabled={action.disabled}
+              >
+                {action.icon && <span className="mr-2">{action.icon}</span>}
+                {action.label}
+              </DropdownMenuItem>
+            )
+          )}
           {additionalActions.length > 0 && (hasEdit || hasDelete) && (
             <DropdownMenuSeparator />
           )}

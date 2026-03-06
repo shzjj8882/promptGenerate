@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -10,6 +10,8 @@ export interface CalendarProps {
   onSelect?: (date: Date | undefined) => void;
   className?: string;
   disabled?: boolean;
+  /** 指定显示的月份，格式 YYYY-MM */
+  displayMonth?: string;
 }
 
 export function Calendar({
@@ -17,10 +19,24 @@ export function Calendar({
   onSelect,
   className,
   disabled,
+  displayMonth,
 }: CalendarProps) {
-  const [currentMonth, setCurrentMonth] = React.useState(
-    selected ? new Date(selected.getFullYear(), selected.getMonth(), 1) : new Date()
-  );
+  const initialMonth = displayMonth
+    ? (() => {
+        const [y, m] = displayMonth.split("-").map(Number);
+        return new Date(y, m - 1, 1);
+      })()
+    : selected
+      ? new Date(selected.getFullYear(), selected.getMonth(), 1)
+      : new Date();
+  const [currentMonth, setCurrentMonth] = React.useState(initialMonth);
+
+  React.useEffect(() => {
+    if (displayMonth) {
+      const [y, m] = displayMonth.split("-").map(Number);
+      setCurrentMonth(new Date(y, m - 1, 1));
+    }
+  }, [displayMonth]);
 
   const today = new Date();
   const year = currentMonth.getFullYear();

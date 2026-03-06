@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -63,6 +63,7 @@ export function Pagination({
         <Button
           variant="outline"
           size="sm"
+          className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-4"
           onClick={() => {
             const newPage = Math.max(1, safeCurrentPage - 1);
             if (Number.isFinite(newPage) && newPage >= 1) {
@@ -70,9 +71,10 @@ export function Pagination({
             }
           }}
           disabled={safeCurrentPage === 1 || disabled}
+          aria-label="上一页"
         >
           <ChevronLeft className="h-4 w-4" />
-          上一页
+          <span className="hidden sm:inline">上一页</span>
         </Button>
         <div className="flex items-center gap-1">
           {pages.map((pageNum) => (
@@ -95,6 +97,7 @@ export function Pagination({
         <Button
           variant="outline"
           size="sm"
+          className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-4"
           onClick={() => {
             const newPage = Math.min(safeTotalPages, safeCurrentPage + 1);
             if (Number.isFinite(newPage) && newPage >= 1) {
@@ -102,8 +105,9 @@ export function Pagination({
             }
           }}
           disabled={safeCurrentPage === safeTotalPages || disabled}
+          aria-label="下一页"
         >
-          下一页
+          <span className="hidden sm:inline">下一页</span>
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

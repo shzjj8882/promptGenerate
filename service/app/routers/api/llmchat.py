@@ -13,6 +13,8 @@ from app.services.prompt_service import PromptService, TenantService, Placeholde
 from app.services.llm_service import LLMService
 from app.services.mcp_service import MCPService, TRANSPORT_SSE
 from app.services.mcp_llm_integration import chat_with_mcp_tools
+from app.services.team_quota_service import TeamQuotaService
+from app.services.team_usage_log_service import log_team_usage
 from app.core.config import settings
 import re
 import json
@@ -773,6 +775,13 @@ async def chat_prompt(
             config_dict = json.loads(model.extra_config) if isinstance(model.extra_config, str) else model.extra_config
         except:
             pass
+    # 在创建 LLMService 之前，按团队配额预扣一次本次请求的最大 token 数
+    await TeamQuotaService.check_and_consume_tokens(
+        db=db,
+        team_id=team_id,
+        requested_tokens=llm_config.max_tokens,
+    )
+
     llm_service = LLMService(
         api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
         api_base=model.api_base or getattr(settings, "DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
@@ -924,6 +933,17 @@ async def chat_prompt(
                         "max_tokens": llm_config.max_tokens
                     }
                 ))
+            
+            # 用量统计：5=组合 LLM、接口查询（流式无 usage 时用 max_tokens 近似，与 consume 一致）
+            if team_id:
+                tokens_to_log = llm_config.max_tokens or 512
+                await log_team_usage(
+                    db, team_id, usage_type=5,
+                    tokens_used=tokens_to_log,
+                    extra_info=json.dumps({"scene": scene, "mode": "prompt_chat"}),
+                    business_name="组合LLM接口",
+                )
+                await db.commit()
             
             # 发送结束标记
             yield "data: [DONE]\n\n"

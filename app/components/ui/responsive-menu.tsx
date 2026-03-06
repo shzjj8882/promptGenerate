@@ -5,6 +5,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -26,6 +27,13 @@ export interface ResponsiveMenuItem {
   disabled?: boolean;
 }
 
+/** 菜单项或分隔线 */
+export type ResponsiveMenuItemOrSeparator = ResponsiveMenuItem | { type: "separator" };
+
+function isSeparator(item: ResponsiveMenuItemOrSeparator): item is { type: "separator" } {
+  return "type" in item && item.type === "separator";
+}
+
 interface ResponsiveMenuProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -34,9 +42,11 @@ interface ResponsiveMenuProps {
   title?: string;
   /** Dropdown 对齐方式（仅桌面端） */
   align?: "start" | "end" | "center";
-  items: ResponsiveMenuItem[];
+  items: ResponsiveMenuItemOrSeparator[];
   /** 阻止事件冒泡（如列头、行操作在 overlay 上） */
   stopPropagation?: boolean;
+  /** 菜单项图标容器 className（如 [&_svg]:size-3.5），移动端 Sheet 使用 */
+  itemIconClassName?: string;
 }
 
 /**
@@ -51,10 +61,12 @@ export function ResponsiveMenu({
   align = "end",
   items,
   stopPropagation = false,
+  itemIconClassName = "[&_svg]:size-4 [&_svg]:shrink-0",
 }: ResponsiveMenuProps) {
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
 
-  const handleItemClick = (item: ResponsiveMenuItem) => {
+  const handleItemClick = (item: ResponsiveMenuItemOrSeparator) => {
+    if (isSeparator(item)) return;
     item.onClick();
     onOpenChange(false);
   };
@@ -94,26 +106,30 @@ export function ResponsiveMenu({
               <SheetTitle className="text-base">{title}</SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto">
-              {items.map((item, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  disabled={item.disabled}
-                  className={cn(
-                    "flex w-full items-center gap-2 px-4 py-3 text-left text-sm outline-none transition-colors hover:bg-accent active:bg-accent",
-                    item.variant === "destructive" &&
-                      "text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
-                  )}
-                  onClick={() => handleItemClick(item)}
-                >
-                  {item.icon && (
-                    <span className="[&_svg]:size-4 [&_svg]:shrink-0">
-                      {item.icon}
-                    </span>
-                  )}
-                  {item.label}
-                </button>
-              ))}
+              {items.map((item, index) =>
+                isSeparator(item) ? (
+                  <div key={index} className="my-1 h-px bg-border shrink-0" role="separator" />
+                ) : (
+                  <button
+                    key={index}
+                    type="button"
+                    disabled={item.disabled}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-4 py-3 text-left text-sm outline-none transition-colors hover:bg-accent active:bg-accent",
+                      item.variant === "destructive" &&
+                        "text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
+                    )}
+                    onClick={() => handleItemClick(item)}
+                  >
+                    {item.icon && (
+                      <span className={itemIconClassName}>
+                        {item.icon}
+                      </span>
+                    )}
+                    {item.label}
+                  </button>
+                )
+              )}
             </div>
           </SheetContent>
         </Sheet>
@@ -128,17 +144,21 @@ export function ResponsiveMenu({
           {trigger}
         </DropdownMenuTrigger>
       <DropdownMenuContent align={align}>
-        {items.map((item, index) => (
-          <DropdownMenuItem
-            key={index}
-            onClick={() => handleItemClick(item)}
-            disabled={item.disabled}
-            variant={item.variant}
-          >
-            {item.icon}
-            {item.label}
-          </DropdownMenuItem>
-        ))}
+        {items.map((item, index) =>
+          isSeparator(item) ? (
+            <DropdownMenuSeparator key={index} />
+          ) : (
+            <DropdownMenuItem
+              key={index}
+              onClick={() => handleItemClick(item)}
+              disabled={item.disabled}
+              variant={item.variant}
+            >
+              {item.icon}
+              {item.label}
+            </DropdownMenuItem>
+          )
+        )}
       </DropdownMenuContent>
       </div>
     </DropdownMenu>

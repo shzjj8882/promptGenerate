@@ -1,9 +1,11 @@
 "use client";
 
 import { memo } from "react";
-import { Shield, Building2, Bug, Pencil } from "lucide-react";
+import { Shield, Building2, Bug, Pencil } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { TYPOGRAPHY, CARD_STYLES } from "@/lib/design-tokens";
 import { getSceneLabel } from "../utils/prompt-utils";
 import type { Prompt, Tenant } from "../prompts-client";
 
@@ -31,13 +33,11 @@ export const PromptCard = memo(function PromptCard({
   const sceneLabel = getSceneLabel(prompt.scene);
 
   return (
-    <div
-      className="group relative rounded-lg border-2 border-solid border-border bg-card p-6 shadow-sm transition-shadow hover:shadow-md"
-    >
+    <div className={cn(CARD_STYLES.base, "group relative p-6")}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 space-y-3">
           <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-foreground">{sceneLabel}</h3>
+            <h3 className={TYPOGRAPHY.cardTitle}>{sceneLabel}</h3>
             <div className="flex items-center gap-2">
               {prompt.isDefault && (
                 <Badge variant="outline" className="border-blue-300">
@@ -55,7 +55,7 @@ export const PromptCard = memo(function PromptCard({
           </div>
 
           <div>
-            <p className="line-clamp-3 text-sm text-muted-foreground">
+            <p className={cn(TYPOGRAPHY.cardSubtitle, "line-clamp-3")}>
               {prompt.content}
             </p>
           </div>
@@ -63,7 +63,7 @@ export const PromptCard = memo(function PromptCard({
           {prompt.placeholders.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {prompt.placeholders.map((ph) => (
-                <Badge key={ph} variant="secondary" className="text-xs">
+                <Badge key={ph} variant="secondary" className={TYPOGRAPHY.caption}>
                   {"{"}
                   {ph}
                   {"}"}

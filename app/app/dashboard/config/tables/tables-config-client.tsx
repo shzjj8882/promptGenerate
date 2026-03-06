@@ -1,11 +1,12 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { observer } from "mobx-react-lite";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, Search, X, Save, Undo2, Redo2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, X, Save, Undo2, Redo2 } from "@/components/icons";
 import {
   Table,
   TableBody,
@@ -44,20 +45,24 @@ import {
   type TableRowCreate,
   type TableRowUpdate,
   type TableColumn,
+  type TableColumnOptions,
 } from "@/lib/api/multi-dimension-tables";
 import { filterNonDeletedRows } from "@/lib/utils/table-rows";
+import { convertDateFormat } from "@/lib/utils/date-format";
 import { useErrorHandler } from "@/hooks/use-error-handler";
+import { useUndoRedoShortcuts } from "@/hooks/use-undo-redo-shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { SpreadsheetTableView } from "./spreadsheet-table-view";
-import { CanvasSpreadsheetTableView } from "./canvas-spreadsheet-table-view";
+const TableCanvasView = dynamic(
+  () => import("./components/table-canvas-view").then((m) => ({ default: m.TableCanvasView })),
+  { ssr: false }
+);
 import { DatePicker, DATE_FORMATS } from "@/components/ui/date-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label as LabelPrimitive } from "@/components/ui/label";
 
 function TablesConfigClientImpl() {
   const [table, setTable] = useState<MultiDimensionTable | null>(null);
-  const [useCanvasMode, setUseCanvasMode] = useState(true); // Canvas 渲染模式开关（默认开启）
   const [loading, setLoading] = useState(false);
   const [tableRows, setTableRows] = useState<TableRowType[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -97,8 +102,10 @@ function TablesConfigClientImpl() {
     }
   }, [table?.id, table?.columns, localRows.length, loadingRows, loading]);
   
-  // 添加列对话框状态
+  // 添加列对话框状态（addColumnInsertPosition 非空时表示从「向左/向右插入列」进入；addColumnCopyFromKey 非空时表示从「复制列」进入，保存时复制该列单元格内容）
   const [isAddColumnDialogOpen, setIsAddColumnDialogOpen] = useState(false);
+  const [addColumnInsertPosition, setAddColumnInsertPosition] = useState<{ side: "left" | "right"; columnKey: string } | null>(null);
+  const [addColumnCopyFromKey, setAddColumnCopyFromKey] = useState<string | null>(null);
   const [deleteTableDialogOpen, setDeleteTableDialogOpen] = useState(false);
   const [newColumnKey, setNewColumnKey] = useState("");
   const [newColumnLabel, setNewColumnLabel] = useState("");
@@ -116,7 +123,7 @@ function TablesConfigClientImpl() {
   const [editingColumnOptions, setEditingColumnOptions] = useState<Array<{key: string, value: string}>>([]);
   const [editingColumnDateFormat, setEditingColumnDateFormat] = useState<string>("YYYY/MM/DD");
   const [editingColumnDefaultValue, setEditingColumnDefaultValue] = useState<string>("");
-  
+
   // 搜索状态
   const [searchColumnKey, setSearchColumnKey] = useState<string>("");
   const [searchValue, setSearchValue] = useState<string>("");
@@ -124,75 +131,6 @@ function TablesConfigClientImpl() {
   const { handleError } = useErrorHandler({
     showToast: true,
   });
-
-  // 辅助函数：将日期字符串从旧格式转换为新格式
-  const convertDateFormat = (dateValue: string, oldFormat: string, newFormat: string): string => {
-    if (!dateValue) return "";
-    
-    try {
-      // 尝试多种方式解析日期
-      let date: Date | null = null;
-      
-      // 方法1: 直接使用 Date 构造函数（适用于 ISO 格式和常见格式）
-      date = new Date(dateValue);
-      if (!isNaN(date.getTime())) {
-        // 验证日期是否合理（避免解析错误但得到无效日期）
-        const year = date.getFullYear();
-        if (year >= 1900 && year <= 2100) {
-          const formatOption = DATE_FORMATS.find(f => f.value === newFormat);
-          if (formatOption) {
-            return formatOption.format(date);
-          }
-        }
-      }
-      
-      // 如果直接解析失败，尝试手动解析常见格式
-      // 例如：YYYY/MM/DD, YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY
-      const patterns = [
-        /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/, // YYYY/MM/DD 或 YYYY-MM-DD
-        /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/, // MM/DD/YYYY 或 DD/MM/YYYY
-      ];
-      
-      for (const pattern of patterns) {
-        const match = dateValue.match(pattern);
-        if (match) {
-          let year: number, month: number, day: number;
-          
-          if (pattern === patterns[0]) {
-            // YYYY/MM/DD 格式
-            year = parseInt(match[1], 10);
-            month = parseInt(match[2], 10) - 1; // 月份从 0 开始
-            day = parseInt(match[3], 10);
-          } else {
-            // MM/DD/YYYY 或 DD/MM/YYYY - 需要根据 oldFormat 判断
-            if (oldFormat === "DD/MM/YYYY") {
-              day = parseInt(match[1], 10);
-              month = parseInt(match[2], 10) - 1;
-              year = parseInt(match[3], 10);
-            } else {
-              // 默认 MM/DD/YYYY
-              month = parseInt(match[1], 10) - 1;
-              day = parseInt(match[2], 10);
-              year = parseInt(match[3], 10);
-            }
-          }
-          
-          date = new Date(year, month, day);
-          if (!isNaN(date.getTime())) {
-            const formatOption = DATE_FORMATS.find(f => f.value === newFormat);
-            if (formatOption) {
-              return formatOption.format(date);
-            }
-          }
-        }
-      }
-      
-      // 如果所有解析都失败，返回原值
-      return dateValue;
-    } catch {
-      return dateValue;
-    }
-  };
 
   const fetchTableRows = useCallback(async (tableId: string, tableData?: MultiDimensionTable) => {
     if (!tableId) return;
@@ -210,36 +148,6 @@ function TablesConfigClientImpl() {
       setLoadingRows(false);
     }
   }, [handleError]);
-
-  // 键盘快捷键支持
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // 如果正在输入，不触发快捷键
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
-      
-      // Ctrl+Z 或 Cmd+Z: 撤销
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        if (historyIndex > 0 && !saving) {
-          handleUndo();
-        }
-      }
-      // Ctrl+Y 或 Ctrl+Shift+Z 或 Cmd+Shift+Z: 重做
-      if (((e.ctrlKey || e.metaKey) && e.key === 'y') || 
-          ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z')) {
-        e.preventDefault();
-        if (historyIndex < history.length - 1 && !saving) {
-          handleRedo();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [historyIndex, history.length, saving]);
 
   const fetchTable = useCallback(async () => {
     try {
@@ -334,7 +242,7 @@ function TablesConfigClientImpl() {
     };
     
     // 构建 options 对象
-    const columnOptions: Record<string, any> = {};
+    const columnOptions: TableColumnOptions = {};
     
     // 如果是单选或多选，添加选项
     if (newColumnType === "single_select" || newColumnType === "multi_select") {
@@ -355,16 +263,28 @@ function TablesConfigClientImpl() {
     if (Object.keys(columnOptions).length > 0) {
       newColumn.options = columnOptions;
     }
+
+    let updatedColumns: TableColumn[];
+    if (addColumnInsertPosition) {
+      const idx = table.columns.findIndex((c) => c.key === addColumnInsertPosition.columnKey);
+      if (idx < 0) {
+        updatedColumns = [...table.columns, newColumn];
+      } else {
+        updatedColumns = [...table.columns];
+        updatedColumns.splice(addColumnInsertPosition.side === "left" ? idx : idx + 1, 0, newColumn);
+      }
+    } else {
+      updatedColumns = [...table.columns, newColumn];
+    }
     
-    const updatedColumns = [...table.columns, newColumn];
-    
-    // 为所有现有行添加新列的值（使用默认值或空）
+    // 为所有现有行添加新列的值：复制列时用源列单元格内容，否则用默认值或空
     const defaultValue = newColumn.options?.defaultValue || "";
+    const copyFromKey = addColumnCopyFromKey;
     const newRows = localRows.map(row => ({
       ...row,
       cells: {
         ...row.cells,
-        [newColumn.key]: defaultValue, // 使用默认值
+        [newColumn.key]: copyFromKey != null ? (row.cells[copyFromKey] ?? "") : defaultValue,
       },
     }));
     
@@ -381,6 +301,8 @@ function TablesConfigClientImpl() {
     
     // 关闭对话框并重置表单
     setIsAddColumnDialogOpen(false);
+    setAddColumnInsertPosition(null);
+    setAddColumnCopyFromKey(null);
     setNewColumnKey("");
     setNewColumnLabel("");
     setNewColumnType("text");
@@ -405,6 +327,8 @@ function TablesConfigClientImpl() {
   };
 
   const handleAddColumn = () => {
+    setAddColumnInsertPosition(null);
+    setAddColumnCopyFromKey(null);
     setNewColumnKey("");
     setNewColumnLabel("");
     setNewColumnType("text");
@@ -500,7 +424,7 @@ function TablesConfigClientImpl() {
         };
         
         // 构建 options 对象
-        const columnOptions: Record<string, any> = {};
+        const columnOptions: TableColumnOptions = {};
         
         // 如果是单选或多选，更新选项
         if (editingColumnType === "single_select" || editingColumnType === "multi_select") {
@@ -655,36 +579,13 @@ function TablesConfigClientImpl() {
     setTimeout(() => setIsUndoRedo(false), 0);
   }, [history.length, history, table]);
 
-  // 键盘快捷键支持
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // 如果正在输入，不触发快捷键
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
-      
-      // Ctrl+Z 或 Cmd+Z: 撤销
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        if (historyIndex > 0 && !saving) {
-          handleUndo();
-        }
-      }
-      // Ctrl+Y 或 Ctrl+Shift+Z 或 Cmd+Shift+Z: 重做
-      if (((e.ctrlKey || e.metaKey) && e.key === 'y') || 
-          ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z')) {
-        e.preventDefault();
-        if (historyIndex < history.length - 1 && !saving) {
-          handleRedo();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [historyIndex, history.length, saving, handleUndo, handleRedo]);
-
+  useUndoRedoShortcuts({
+    canUndo: historyIndex > 0,
+    canRedo: historyIndex < history.length - 1,
+    disabled: saving,
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+  });
 
   const handleCellChange = (rowId: string, columnKey: string, value: string) => {
     if (!table) return;
@@ -810,6 +711,74 @@ function TablesConfigClientImpl() {
     recordHistory(newRows, updatedColumns);
   };
 
+  const handleReorderColumns = useCallback((columnKeys: string[]) => {
+    if (!table) return;
+    const newColumns = columnKeys
+      .map((k) => table.columns.find((c) => c.key === k))
+      .filter((c): c is TableColumn => !!c);
+    if (newColumns.length !== table.columns.length) return;
+    setTable({ ...table, columns: newColumns });
+    setHasUnsavedChanges(true);
+    recordHistory(localRows, newColumns);
+  }, [table, localRows]);
+
+  const makeNewColumnKey = useCallback(() => {
+    const base = `col_${Date.now()}`;
+    if (!table) return base;
+    let key = base;
+    let n = 0;
+    while (table.columns.some((c) => c.key === key)) key = `${base}_${++n}`;
+    return key;
+  }, [table]);
+
+  const handleInsertColumnLeft = useCallback((columnKey: string) => {
+    if (!table?.columns?.some((c) => c.key === columnKey)) return;
+    setAddColumnInsertPosition({ side: "left", columnKey });
+    setNewColumnKey("");
+    setNewColumnLabel("");
+    setNewColumnType("text");
+    setNewColumnOptions([]);
+    setNewColumnDateFormat("YYYY/MM/DD");
+    setNewColumnDefaultValue("");
+    setIsAddColumnDialogOpen(true);
+  }, [table?.columns]);
+
+  const handleInsertColumnRight = useCallback((columnKey: string) => {
+    if (!table?.columns?.some((c) => c.key === columnKey)) return;
+    setAddColumnInsertPosition({ side: "right", columnKey });
+    setNewColumnKey("");
+    setNewColumnLabel("");
+    setNewColumnType("text");
+    setNewColumnOptions([]);
+    setNewColumnDateFormat("YYYY/MM/DD");
+    setNewColumnDefaultValue("");
+    setIsAddColumnDialogOpen(true);
+  }, [table?.columns]);
+
+  const handleCopyColumn = useCallback((columnKey: string) => {
+    if (!table) return;
+    const col = table.columns.find((c) => c.key === columnKey);
+    if (!col) return;
+    setAddColumnInsertPosition(null);
+    setAddColumnCopyFromKey(columnKey);
+    setNewColumnKey(makeNewColumnKey());
+    setNewColumnLabel(`${col.label} (副本)`);
+    setNewColumnType(col.type || "text");
+    if (col.type === "single_select" || col.type === "multi_select") {
+      const options = col.options?.options || [];
+      setNewColumnOptions(options.map((opt: string) => ({ key: opt, value: opt })));
+    } else {
+      setNewColumnOptions([]);
+    }
+    if (col.type === "date") {
+      setNewColumnDateFormat(col.options?.format || "YYYY/MM/DD");
+    } else {
+      setNewColumnDateFormat("YYYY/MM/DD");
+    }
+    setNewColumnDefaultValue(col.options?.defaultValue || "");
+    setIsAddColumnDialogOpen(true);
+  }, [table, makeNewColumnKey]);
+
   const handleSearch = async () => {
     if (!table) return;
     try {
@@ -933,78 +902,35 @@ function TablesConfigClientImpl() {
       
       {/* 电子表格式视图 - 直接显示，无需页面头部 */}
       <div className="rounded-lg border bg-card flex flex-col overflow-hidden flex-1 min-h-0 min-w-0">
-        {/* 渲染模式切换按钮 */}
-        {table && (
-          <div className="flex items-center justify-end gap-2 p-2 border-b bg-muted/30 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">渲染模式:</span>
-              <Button
-                size="sm"
-                variant={useCanvasMode ? "default" : "outline"}
-                onClick={() => setUseCanvasMode(true)}
-                className="h-7 text-xs"
-              >
-                Canvas（高性能）
-              </Button>
-              <Button
-                size="sm"
-                variant={!useCanvasMode ? "default" : "outline"}
-                onClick={() => setUseCanvasMode(false)}
-                className="h-7 text-xs"
-              >
-                DOM（标准）
-              </Button>
-            </div>
-          </div>
-        )}
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
             加载中...
           </div>
         ) : table ? (
-          useCanvasMode ? (
-            <CanvasSpreadsheetTableView
-              table={table}
-              rows={localRows}
-              loading={loadingRows}
-              onCellChange={handleCellChange}
-              onAddRow={handleCreateRow}
-              onAddColumn={handleAddColumn}
-              onDeleteColumn={handleDeleteColumn}
-              onEditColumn={handleEditColumn}
-              onDeleteRow={handleDeleteRow}
-              onUndo={handleUndo}
-              onRedo={handleRedo}
-              canUndo={historyIndex > 0}
-              canRedo={historyIndex < history.length - 1}
-              onSave={handleSave}
-              saving={saving}
-              hasUnsavedChanges={hasUnsavedChanges}
-              onImportRows={handleImportRows}
-              onImportColumns={handleImportColumns}
-            />
-          ) : (
-            <SpreadsheetTableView
-              table={table}
-              rows={localRows}
-              loading={loadingRows}
-              onCellChange={handleCellChange}
-              onAddRow={handleCreateRow}
-              onAddColumn={handleAddColumn}
-              onDeleteColumn={handleDeleteColumn}
-              onEditColumn={handleEditColumn}
-              onDeleteRow={handleDeleteRow}
-              onUndo={handleUndo}
-              onRedo={handleRedo}
-              canUndo={historyIndex > 0}
-              canRedo={historyIndex < history.length - 1}
-              onSave={handleSave}
-              saving={saving}
-              hasUnsavedChanges={hasUnsavedChanges}
-              onImportRows={handleImportRows}
-              onImportColumns={handleImportColumns}
-            />
-          )
+          <TableCanvasView
+            table={table}
+            rows={localRows}
+            loading={loadingRows}
+            onCellChange={handleCellChange}
+            onAddRow={handleCreateRow}
+            onAddColumn={handleAddColumn}
+            onDeleteColumn={handleDeleteColumn}
+            onEditColumn={handleEditColumn}
+            onInsertColumnLeft={handleInsertColumnLeft}
+            onInsertColumnRight={handleInsertColumnRight}
+            onCopyColumn={handleCopyColumn}
+            onDeleteRow={handleDeleteRow}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={historyIndex > 0}
+            canRedo={historyIndex < history.length - 1}
+            onSave={handleSave}
+            saving={saving}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onImportRows={handleImportRows}
+            onImportColumns={handleImportColumns}
+            onReorderColumns={handleReorderColumns}
+          />
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
             加载中...
@@ -1039,12 +965,24 @@ function TablesConfigClientImpl() {
       </Dialog>
 
       {/* 添加列对话框 */}
-      <Dialog open={isAddColumnDialogOpen} onOpenChange={setIsAddColumnDialogOpen}>
+      <Dialog open={isAddColumnDialogOpen} onOpenChange={(open) => { setIsAddColumnDialogOpen(open); if (!open) { setAddColumnInsertPosition(null); setAddColumnCopyFromKey(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>添加列</DialogTitle>
+            <DialogTitle>{addColumnCopyFromKey ? "复制列" : "添加列"}</DialogTitle>
             <DialogDescription>
-              添加一个新的列到表格中
+              {addColumnCopyFromKey
+                ? (() => {
+                    const col = table?.columns.find((c) => c.key === addColumnCopyFromKey);
+                    return col ? `复制自「${col.label}」列，可修改后确认，保存后新列单元格将填入源列内容` : "添加一个新的列到表格中";
+                  })()
+                : addColumnInsertPosition
+                  ? (() => {
+                      const col = table?.columns.find((c) => c.key === addColumnInsertPosition.columnKey);
+                      return col
+                        ? `新列将插入到「${col.label}」的${addColumnInsertPosition.side === "left" ? "左侧" : "右侧"}`
+                        : "添加一个新的列到表格中";
+                    })()
+                  : "添加一个新的列到表格中"}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">

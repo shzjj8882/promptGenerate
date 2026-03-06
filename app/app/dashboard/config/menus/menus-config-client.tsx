@@ -20,15 +20,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, ChevronRight, ChevronDown } from "lucide-react";
+import { Pencil, ChevronRight, ChevronDown } from "@/components/icons";
 import { Permission, getMenuTree, updateMenuConfig, getPermissions, MenuItem } from "@/lib/api/rbac";
 import { showSuccessToast } from "@/lib/utils/toast";
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { cn } from "@/lib/utils";
 
-interface MenusConfigClientProps {}
-
-function MenusConfigClientImpl(props: MenusConfigClientProps) {
+function MenusConfigClientImpl() {
   const [menuTree, setMenuTree] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());

@@ -30,4 +30,5 @@ MIGRATIONS: List[Tuple[str, str]] = [
     ("migrate_add_notification_menu", "migrate"),
     ("migrate_add_notification_api_permissions", "migrate"),
     ("migrate_add_notification_menu_config", "migrate"),
+    ("migrate_add_system_dashboard_config", "migrate"),
 ]

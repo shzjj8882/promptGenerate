@@ -20,10 +20,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { DatePicker } from "@/components/ui/date-picker";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Copy, Check } from "lucide-react";
-import { buildCurlCommand, getCurlBaseUrl } from "@/lib/utils/curl";
+import { TableColumnFormField } from "@/components/shared/table-column-form-field";
+import { Copy, Check } from "@/components/icons";
+import { buildCurlCommandForApi, getCurlBaseUrl } from "@/lib/utils/curl";
+import { userStore } from "@/store/user-store";
 import type { MultiDimensionTable, TableColumn } from "@/lib/api/multi-dimension-tables";
 
 export type RowConditionDialogMode = "edit_by_condition" | "delete_by_condition";
@@ -38,89 +38,6 @@ interface RowConditionDialogProps {
     condition: { column_key: string; value: string },
     cells?: Record<string, string>
   ) => void | Promise<void>;
-}
-
-/** 根据列类型渲染表单控件 */
-function renderFormField(
-  col: TableColumn,
-  value: string,
-  onChange: (v: string) => void
-) {
-  const columnType = col.type || "text";
-  const options = col.options?.options || [];
-
-  switch (columnType) {
-    case "number":
-      return (
-        <Input
-          type="number"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={`请输入${col.label}`}
-        />
-      );
-    case "date":
-      return (
-        <DatePicker
-          value={value}
-          onChange={(v) => onChange(v || "")}
-          format={col.options?.format || "YYYY/MM/DD"}
-          className="w-full"
-        />
-      );
-    case "single_select":
-      return (
-        <Select value={value || ""} onValueChange={onChange}>
-          <SelectTrigger>
-            <SelectValue placeholder={`请选择${col.label}`} />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((opt: string) => (
-              <SelectItem key={opt} value={opt}>
-                {opt}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    case "multi_select":
-      const selectedValues = value ? value.split(",").filter((v) => v) : [];
-      return (
-        <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
-          {options.length === 0 ? (
-            <p className="text-sm text-muted-foreground">请先配置列选项</p>
-          ) : (
-            options.map((opt: string) => (
-              <div key={opt} className="flex items-center gap-2">
-                <Checkbox
-                  id={`${col.key}-${opt}`}
-                  checked={selectedValues.includes(opt)}
-                  onCheckedChange={(checked) => {
-                    const next = checked
-                      ? [...selectedValues, opt]
-                      : selectedValues.filter((v) => v !== opt);
-                    onChange(next.join(","));
-                  }}
-                />
-                <Label htmlFor={`${col.key}-${opt}`} className="text-sm font-normal cursor-pointer">
-                  {opt}
-                </Label>
-              </div>
-            ))
-          )}
-        </div>
-      );
-    default:
-      return (
-        <Textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={`请输入${col.label}`}
-          rows={2}
-          className="resize-none"
-        />
-      );
-  }
 }
 
 export function RowConditionDialog({
@@ -180,14 +97,14 @@ export function RowConditionDialog({
   }, [mode, conditionColumnKey, conditionValue, formValues, onSubmit, onOpenChange]);
 
   const handleCopyCurl = useCallback(async () => {
-    if (!table?.id) return;
+    if (!table?.code) return;
 
     const baseUrl = getCurlBaseUrl();
-    const url = `${baseUrl}/admin/multi-dimension-tables/${table.id}/rows/by-condition`;
+    const url = `${baseUrl}/api/multi-dimension-tables/${table.code}/rows/by-condition`;
 
     const curlCommand =
       mode === "delete_by_condition"
-        ? buildCurlCommand({
+        ? buildCurlCommandForApi({
             method: "DELETE",
             url,
             body: {
@@ -196,8 +113,9 @@ export function RowConditionDialog({
                 value: String(conditionValue),
               },
             },
+            teamAuthcode: userStore.user?.team_authcode,
           })
-        : buildCurlCommand({
+        : buildCurlCommandForApi({
             method: "PUT",
             url,
             body: {
@@ -207,6 +125,7 @@ export function RowConditionDialog({
               },
               cells: formValues,
             },
+            teamAuthcode: userStore.user?.team_authcode,
           });
 
     try {
@@ -216,7 +135,8 @@ export function RowConditionDialog({
     } catch {
       // ignore
     }
-  }, [table?.id, mode, conditionColumnKey, conditionValue, formValues]);
+  }, [table?.code, mode, conditionColumnKey, conditionValue, formValues]);
+
 
   const title =
     mode === "edit_by_condition" ? "按条件编辑记录" : "按条件删除记录";
@@ -280,11 +200,11 @@ export function RowConditionDialog({
               {columns.map((col) => (
                 <div key={col.key} className="space-y-2">
                   <Label htmlFor={`cond-${col.key}`}>{col.label}</Label>
-                  {renderFormField(
-                    col,
-                    formValues[col.key] ?? "",
-                    (v) => setFormValues((prev) => ({ ...prev, [col.key]: v }))
-                  )}
+                  <TableColumnFormField
+                    column={col}
+                    value={formValues[col.key] ?? ""}
+                    onChange={(v) => setFormValues((prev) => ({ ...prev, [col.key]: v }))}
+                  />
                 </div>
               ))}
             </div>

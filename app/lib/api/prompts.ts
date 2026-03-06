@@ -106,6 +106,12 @@ export interface Placeholder {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // 多维表格数据源相关（与 PlaceholderCreate 对齐）
+  data_source_type?: "user_input" | "multi_dimension_table";
+  data_type?: string;
+  table_id?: string;
+  table_column_key?: string;
+  table_row_id_param_key?: string;
 }
 
 export interface PlaceholderCreate {

@@ -16,7 +16,11 @@ from app.core.response import ResponseModel
 from app.core.config import settings
 from app.services.composition_service import CompositionService
 from app.services.prompt_service import PromptService, TenantService, PlaceholderService
-from app.services.llmchat_api_executor import execute_api_prompt_request, stream_llm_chat_request
+from app.services.llmchat_api_executor import (
+    execute_api_prompt_request,
+    stream_llm_chat_request,
+    check_llm_quota_before_stream,
+)
 from app.routers.api.llmchat import LLMConfig, NotificationOption
 from app.models.prompt import Prompt
 
@@ -129,6 +133,14 @@ async def composition_llm(
         "mcp_tool_names": request.mcp_tool_names or comp.mcp_tool_names or [],
         "llm_config": request.llm_config.model_dump() if request.llm_config else {},
     }
+
+    # 流式响应前先校验配额，避免 429 在流已启动后抛出导致 "response already started"
+    await check_llm_quota_before_stream(
+        db=db,
+        team_id=team_id,
+        model_id=request_dict.get("model_id"),
+        request_dict=request_dict,
+    )
 
     async def sse_stream():
         async for chunk in stream_llm_chat_request(

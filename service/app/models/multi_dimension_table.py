@@ -76,3 +76,24 @@ class MultiDimensionTableCell(Base):
     
     def __repr__(self):
         return f"<MultiDimensionTableCell(id={self.id}, row_id={self.row_id}, column_key={self.column_key})>"
+
+
+class MultiDimensionTableHistory(Base):
+    """多维表格已完成历史记录（用于回滚）"""
+
+    __tablename__ = "multi_dimension_table_histories"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    table_id = Column(String, ForeignKey("multi_dimension_tables.id", ondelete="CASCADE"), nullable=False, index=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=True, index=True)
+    label = Column(String, nullable=False)  # 展示给前端的标签，如“保存数据”“接口导入”等
+    snapshot = Column(Text, nullable=False)  # 历史快照 JSON（包含 rows + columns + 可选描述）
+    created_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_table_history_table_team_created", "table_id", "team_id", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<MultiDimensionTableHistory(id={self.id}, table_id={self.table_id}, team_id={self.team_id})>"

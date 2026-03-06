@@ -1,10 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { Bot, Send, ChevronLeft, ChevronRight, Copy, Check, HelpCircle, Globe, Play, ChevronDown, ChevronUp } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { Send, ChevronLeft, ChevronRight, Copy, Check, HelpCircle, Globe, Play, ChevronDown, ChevronUp } from "@/components/icons";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +53,7 @@ import { usePlaceholderTables } from "../hooks/use-placeholder-tables";
 import { cn } from "@/lib/utils";
 import { userStore } from "@/store/user-store";
 import { getLLMModels, type LLMModel } from "@/lib/api/llm-models";
+import { ModelLogo } from "@/components/shared/model-logo";
 import { getMCPConfigsForDebug, type MCPConfig } from "@/lib/api/mcp";
 import { getNotificationConfigsForDebug } from "@/lib/api/notification-config";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -64,6 +62,7 @@ import {
   type NotificationOption,
   toEmailContentType,
 } from "@/app/dashboard/compositions/components/notification-option-picker";
+import { PromptDebugChatView } from "./prompt-debug-chat-view";
 
 interface PromptDebugDialogProps {
   open: boolean;
@@ -122,7 +121,7 @@ export function PromptDebugDialog({
   const [models, setModels] = useState<LLMModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   // 支持嵌套对象结构：{key: {condition_field: value}}
-  const [debugPlaceholderParams, setDebugPlaceholderParams] = useState<Record<string, any>>({});
+  const [debugPlaceholderParams, setDebugPlaceholderParams] = useState<Record<string, unknown>>({});
   const [debugMode, setDebugMode] = useState<"chat" | "api">("chat");
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
   const [copiedCurl, setCopiedCurl] = useState(false);
@@ -157,10 +156,10 @@ export function PromptDebugDialog({
     if (compositionId && compositionPromptId) {
       const tenantId = editableTenantId || compositionTenantId || "";
       const path = debugMode === "chat" ? "llm" : "request";
-      return `${base}/api/compositions/${compositionId}/tenant/${tenantId}/prompt/${compositionPromptId}/${path}`;
+      return `${base}/admin/compositions/${compositionId}/tenant/${tenantId}/prompt/${compositionPromptId}/${path}`;
     }
     const ep = debugMode === "chat" ? "chat" : "api";
-    return `${base}/api/llmchat/prompts/${prompt?.scene}/${ep}`;
+    return `${base}/admin/llmchat/prompts/${prompt?.scene}/${ep}`;
   })();
 
   const {
@@ -267,11 +266,16 @@ export function PromptDebugDialog({
         setLoadingMcps(true);
         const response = await getMCPConfigsForDebug();
         setMcpConfigs(response.items);
-        const validMcp = initialMcpId && response.items.some(m => m.id === initialMcpId)
-          ? initialMcpId
-          : "__none__";
+        const validMcp =
+          initialMcpId && response.items.some((m) => m.id === initialMcpId)
+            ? initialMcpId
+            : "__none__";
         setSelectedMcpId(validMcp);
-        setSelectedMcpToolNames(new Set());
+        // 仅在没有组合预配置工具时清空本地选择；
+        // 若来自组合预览（initialMcpToolNames 有值），则保留预选中的工具列表
+        if (!compositionId || !initialMcpToolNames || initialMcpToolNames.length === 0) {
+          setSelectedMcpToolNames(new Set());
+        }
       } catch (error) {
         logger.error("加载 MCP 列表失败", error);
       } finally {
@@ -280,15 +284,20 @@ export function PromptDebugDialog({
     };
 
     loadMcps();
-  }, [open, isMounted, initialMcpId]);
+  }, [open, isMounted, initialMcpId, compositionId, initialMcpToolNames]);
 
-  // 复制 CURL 命令（业务场景，使用团队认证码）
+  // 复制 CURL 命令：统一用 /api 格式（供外部/业务调用），X-Team-AuthCode
   const handleCopyCurl = useCallback(async () => {
     if (!prompt) return;
-    const url = apiUrl;
-    
-    // 获取团队认证码（业务场景）
-    const teamAuthcode = userStore.user?.team_authcode;
+    let url: string;
+    if (compositionId && compositionPromptId) {
+      const tenantId = editableTenantId || compositionTenantId || "";
+      const path = debugMode === "chat" ? "llm" : "request";
+      const base = API_BASE_URL?.replace(/\/$/, "") || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
+      url = `${base}/api/compositions/${compositionId}/tenant/${tenantId}/prompt/${compositionPromptId}/${path}`;
+    } else {
+      url = apiUrl;
+    }
     
     const requestBody: any = {};
     if (debugTenantCode?.trim()) {
@@ -324,10 +333,10 @@ export function PromptDebugDialog({
       };
     }
 
-    // 生成业务场景的 CURL 命令（使用团队认证码）
+    const authHeader = `-H "X-Team-AuthCode: ${userStore.user?.team_authcode || "YOUR_TEAM_AUTHCODE"}"`;
     const curlCommand = `curl -X POST "${url}" \\
   -H "Content-Type: application/json" \\
-  ${teamAuthcode ? `-H "X-Team-AuthCode: ${teamAuthcode}" \\` : `-H "X-Team-AuthCode: YOUR_TEAM_AUTHCODE" \\`}
+  ${authHeader} \\
   -d '${JSON.stringify(requestBody, null, 2)}'`;
 
     try {
@@ -337,7 +346,7 @@ export function PromptDebugDialog({
     } catch (error) {
       logger.error("复制失败", error);
     }
-  }, [prompt, apiUrl, debugMode, debugTenantCode, debugPlaceholderParams, debugLLMConfig, input, selectedModelId, selectedMcpId, selectedMcpToolNames, notificationOption, notificationEmailTo]);
+  }, [prompt, apiUrl, compositionId, compositionPromptId, editableTenantId, compositionTenantId, debugMode, debugTenantCode, debugPlaceholderParams, debugLLMConfig, input, selectedModelId, selectedMcpId, selectedMcpToolNames, notificationOption, notificationEmailTo]);
 
   // 重置状态
   const handleOpenChange = useCallback((newOpen: boolean) => {
@@ -384,49 +393,45 @@ export function PromptDebugDialog({
       .finally(() => setLoadingNotificationConfigs(false));
   }, [open, debugMode]);
 
-  if (!prompt) return null;
-
-  /** 预览模式下：模型、MCP、通知等固定配置只读；temperature、maxTokens、租户、占位符等可调试 */
-  const configReadOnly = true;
+  /** 预览/组合模式下：模型、MCP、通知等固定配置只读；普通调试模式下可编辑 */
+  const configReadOnly = previewMode || !!compositionId;
   const debugParamsEditable = true; // temperature、maxTokens、租户、占位符始终可调
 
-  const needsTenant = checkIfTenantRequired(prompt.content, prompt.placeholders);
-  const contentPlaceholders = parsePlaceholdersFromText(prompt.content);
-  
-  // 解析占位符详细信息（支持新格式）
-  const parsedPlaceholders = contentPlaceholders.map(ph => {
-    const details = parsePlaceholderDetails(`{${ph}}`);
-    if (details) {
-      // 根据 key 或 label 查找占位符定义
-      const placeholderByKey = placeholders.find((p) => p.key === details.key);
-      const placeholderByLabel = placeholders.find((p) => p.label === details.key);
-      const placeholder = placeholderByKey || placeholderByLabel;
-      
-      // 根据占位符配置确定类型（新格式：{key} 的类型由配置决定）
-      let actualType = details.type;
-      if (placeholder) {
-        const dataSourceType = (placeholder as any).data_source_type || "user_input";
-        if (dataSourceType === "multi_dimension_table") {
-          actualType = "table";
-        } else {
-          actualType = "input";
-        }
-      }
-      
-      return {
-        ...details,
-        type: actualType,
-        placeholder,
-      };
+  // 解析占位符详细信息（支持新格式），memo 避免重复计算；必须在 early return 之前调用，遵守 Hooks 规则
+  const { parsedPlaceholders, inputPlaceholders, tablePlaceholders } = useMemo(() => {
+    if (!prompt) {
+      return { parsedPlaceholders: [], inputPlaceholders: [], tablePlaceholders: [] };
     }
-    return null;
-  }).filter((p): p is NonNullable<typeof p> => p !== null);
+    const contentPlaceholders = parsePlaceholdersFromText(prompt.content);
+    const parsed = contentPlaceholders.map((ph) => {
+      const details = parsePlaceholderDetails(`{${ph}}`);
+      if (details) {
+        const placeholderByKey = placeholders.find((p) => p.key === details.key);
+        const placeholderByLabel = placeholders.find((p) => p.label === details.key);
+        const placeholder = placeholderByKey || placeholderByLabel;
+        let actualType = details.type;
+        if (placeholder) {
+          const dataSourceType = (placeholder as { data_source_type?: string }).data_source_type || "user_input";
+          if (dataSourceType === "multi_dimension_table") {
+            actualType = "table";
+          } else {
+            actualType = "input";
+          }
+        }
+        return { ...details, type: actualType, placeholder };
+      }
+      return null;
+    }).filter((p): p is NonNullable<typeof p> => p !== null);
+    return {
+      parsedPlaceholders: parsed,
+      inputPlaceholders: parsed.filter((p) => p.type === "input"),
+      tablePlaceholders: parsed.filter((p) => p.type === "table"),
+    };
+  }, [prompt, placeholders]);
 
-  // 在调试模式下，所有占位符都应该显示输入框
-  // 对于 input 类型，显示值输入框
-  // 对于 table 类型，显示 row_id 输入框
-  const inputPlaceholders = parsedPlaceholders.filter(p => p.type === "input");
-  const tablePlaceholders = parsedPlaceholders.filter(p => p.type === "table");
+  if (!prompt) return null;
+
+  const needsTenant = checkIfTenantRequired(prompt.content, prompt.placeholders);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -449,74 +454,11 @@ export function PromptDebugDialog({
           <div className="flex-1 flex flex-col border rounded-xl overflow-hidden bg-gradient-to-b from-background to-muted/20 shadow-sm transition-all duration-300">
             {debugMode === "chat" ? (
               <>
-                {/* LLM 模式：聊天预览 + 底部输入 */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                  {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                        <Bot className="w-8 h-8 text-primary" />
-                      </div>
-                      <h3 className="text-lg font-semibold mb-2">聊天预览</h3>
-                    </div>
-                  ) : (
-                    <>
-                      {messages.map((msg, idx) => (
-                        <div
-                          key={idx}
-                          className={`flex items-start ${
-                            msg.role === "user" ? "justify-end" : "justify-start"
-                          }`}
-                        >
-                          <div
-                            className={`flex flex-col gap-1 ${
-                              msg.role === "user" ? "max-w-[75%] items-end" : "max-w-[85%] items-start"
-                            }`}
-                          >
-                            <div
-                              className={`rounded-2xl px-4 py-2.5 shadow-sm ${
-                                msg.role === "user"
-                                  ? "bg-primary text-primary-foreground rounded-tr-sm"
-                                  : "bg-background border rounded-tl-sm"
-                              }`}
-                            >
-                              {msg.role === "assistant" ? (
-                                <div className="markdown-content">
-                                  <ReactMarkdown
-                                    remarkPlugins={[remarkGfm]}
-                                    rehypePlugins={[rehypeHighlight]}
-                                  >
-                                    {msg.content}
-                                  </ReactMarkdown>
-                                </div>
-                              ) : (
-                                <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                                  {msg.content}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                      {streaming && (
-                        <div className="flex items-start">
-                          <div className="flex flex-col gap-1 max-w-[85%] items-start">
-                            <div className="bg-background border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm">
-                              <div className="flex items-center gap-2">
-                                <div className="flex gap-1">
-                                  <div className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                                  <div className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                                  <div className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                                </div>
-                                <span className="text-xs text-muted-foreground ml-1">AI 正在思考...</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      <div ref={chatMessagesEndRef} />
-                    </>
-                  )}
-                </div>
+                <PromptDebugChatView
+                  messages={messages}
+                  streaming={streaming}
+                  messagesEndRef={chatMessagesEndRef}
+                />
                 <div className="border-t bg-background/50 backdrop-blur-sm p-4">
                   <div className="flex gap-2 items-end">
                     <div className="flex-1 relative">
@@ -736,7 +678,9 @@ export function PromptDebugDialog({
                                   </SelectTrigger>
                                   <SelectContent>
                                     {models.map((m) => (
-                                      <SelectItem key={m.id} value={m.id}>{m.id}</SelectItem>
+                                      <SelectItem key={m.id} value={m.id}>
+                                        <ModelLogo provider={m.provider} model={m.model} name={m.name} size={20} showName />
+                                      </SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
@@ -1068,8 +1012,13 @@ export function PromptDebugDialog({
                       ) : (
                         models.map((model) => (
                           <SelectItem key={model.id} value={model.id}>
-                            {model.name ?? model.model ?? model.id}
-                            {model.is_default && " [默认]"}
+                            <ModelLogo
+                              provider={model.provider}
+                              model={model.model}
+                              name={`${model.name ?? model.model ?? model.id}${model.is_default ? " [默认]" : ""}`}
+                              size={20}
+                              showName
+                            />
                           </SelectItem>
                         ))
                       )}
@@ -1153,7 +1102,7 @@ export function PromptDebugDialog({
                 </div>
                 {selectedMcpId && selectedMcpId !== "__none__" && (
                   <div className="space-y-2">
-                    <Label>勾选可用的 MCP 工具（子功能）</Label>
+                    <Label>勾选可用的 MCP 工具</Label>
                     <div className="max-h-32 overflow-y-auto space-y-2 rounded border p-2 custom-scrollbar">
                       {mcpConfigs
                         .find((c) => c.id === selectedMcpId)

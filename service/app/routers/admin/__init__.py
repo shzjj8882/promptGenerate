@@ -3,7 +3,7 @@ Admin 路由统一入口
 组合所有 admin 子路由
 """
 from fastapi import APIRouter
-from app.routers.admin import auth, prompts, tenants, scenes, rbac, teams, multi_dimension_tables, llm_models, conversations, mcp, notification_config, dashboard_config, compositions
+from app.routers.admin import auth, prompts, tenants, scenes, rbac, teams, multi_dimension_tables, llm_models, conversations, mcp, notification_config, dashboard_config, compositions, llmchat
 
 router = APIRouter()
 
@@ -45,4 +45,7 @@ router.include_router(dashboard_config.router, tags=["管理接口 > 工作台�
 
 # 注册组合调试相关路由
 router.include_router(compositions.router, tags=["管理接口 > 组合"])
+
+# 注册 LLM Chat 调试相关路由（提示词调试，无配额限制）
+router.include_router(llmchat.router, tags=["管理接口 > LLM Chat"])
 

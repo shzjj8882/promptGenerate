@@ -1,4 +1,4 @@
-import { Lock, Layers, Database } from "lucide-react";
+import { Lock, Layers, Database } from "@/components/icons";
 import { LandingAnimateIn } from "./landing-animate-in";
 
 const trustItems = [

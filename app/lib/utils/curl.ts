@@ -30,7 +30,7 @@ export interface BuildCurlOptions {
 }
 
 /**
- * 构建 CURL 命令字符串
+ * 构建 CURL 命令字符串（Admin 接口，使用 Authorization: Bearer）
  */
 export function buildCurlCommand({
   method,
@@ -43,6 +43,37 @@ export function buildCurlCommand({
   lines.push('  -H "Accept: */*"');
   lines.push('  -H "Content-Type: application/json"');
   lines.push(`  -H "Authorization: Bearer ${authToken}"`);
+
+  if (body !== undefined && body !== null && method !== "GET") {
+    const bodyStr =
+      typeof body === "string" ? body : JSON.stringify(body);
+    lines.push(`  -d '${escapeBodyForShell(bodyStr)}'`);
+  }
+
+  return lines.join(" \\\n");
+}
+
+export interface BuildCurlForApiOptions {
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  url: string;
+  body?: unknown;
+  teamAuthcode?: string;
+}
+
+/**
+ * 构建 CURL 命令字符串（/api 接口，使用 X-Team-AuthCode）
+ */
+export function buildCurlCommandForApi({
+  method,
+  url,
+  body,
+  teamAuthcode,
+}: BuildCurlForApiOptions): string {
+  const authcode = teamAuthcode ?? "YOUR_TEAM_AUTHCODE";
+  const lines: string[] = [`curl -X ${method} "${url}"`];
+  lines.push('  -H "Accept: */*"');
+  lines.push('  -H "Content-Type: application/json"');
+  lines.push(`  -H "X-Team-AuthCode: ${authcode}"`);
 
   if (body !== undefined && body !== null && method !== "GET") {
     const bodyStr =

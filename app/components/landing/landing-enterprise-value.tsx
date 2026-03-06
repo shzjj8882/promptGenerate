@@ -1,4 +1,4 @@
-import { Rocket, Shield, Users, Zap } from "lucide-react";
+import { Rocket, Shield, Users, Zap } from "@/components/icons";
 import { LandingAnimateIn } from "./landing-animate-in";
 
 const values = [

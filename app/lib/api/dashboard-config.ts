@@ -28,6 +28,14 @@ export interface LayoutItem {
   tableChartValueColumnKeys?: string[];
   /** 多维表格组件：图表模式下的饼图聚合方式 */
   tableChartPieAggregate?: "sum" | "count";
+  /** 多维表格组件：控制台卡片中的列宽配置（仅前端使用，服务端按原样存储） */
+  tableColumnWidths?: Record<string, number>;
+  /** 团队 Code 组件：展示模式（认证码 | 使用量统计 | 图表） */
+  teamCodeDisplayMode?: "authcode" | "usage" | "chart";
+  /** 团队 Code 组件：使用量模式下展示的卡片（package=套餐状态, extra=套餐外额度, rollover=上月结余） */
+  teamCodeUsageCard?: "package" | "extra" | "rollover";
+  /** 团队 Code 组件：图表模式下展示的图表（line=折线图近7日用量, pie=饼图按业务） */
+  teamCodeChartType?: "line" | "pie";
 }
 
 /** 工作台配置响应 */

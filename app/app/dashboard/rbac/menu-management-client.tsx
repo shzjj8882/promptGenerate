@@ -20,11 +20,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil, ChevronRight, ChevronDown } from "lucide-react";
+import { Plus, Pencil, ChevronRight, ChevronDown } from "@/components/icons";
 import { Permission, getMenuTree, updateMenuConfig, getPermissions, MenuItem } from "@/lib/api/rbac";
 import { showSuccessToast, showErrorToast } from "@/lib/utils/toast";
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { cn } from "@/lib/utils";
+import { TYPOGRAPHY, CARD_STYLES } from "@/lib/design-tokens";
 
 interface MenuManagementClientProps {}
 
@@ -131,7 +132,7 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
       <div key={node.id} className="select-none">
         <div
           className={cn(
-            "flex items-center gap-2 py-2 px-3 hover:bg-accent rounded-md",
+            "flex items-center gap-3 py-2.5 px-3 hover:bg-accent rounded-lg",
             level > 0 && "ml-4"
           )}
           style={{ paddingLeft: `${indent + 12}px` }}
@@ -150,17 +151,17 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
           ) : (
             <div className="w-6" />
           )}
-          <div className="flex-1 flex items-center gap-2">
-            <span className="font-medium">{node.name}</span>
-            <Badge variant="outline" className="text-xs">
+          <div className="flex-1 flex items-center gap-2 min-w-0">
+            <span className={cn(TYPOGRAPHY.listItem, "truncate")}>{node.name}</span>
+            <Badge variant="outline" className={cn(TYPOGRAPHY.caption, "shrink-0")}>
               {node.code}
             </Badge>
             {(node.parent_id || node.parentId) && (
-              <Badge variant="secondary" className="text-xs">
+              <Badge variant="secondary" className={cn(TYPOGRAPHY.caption, "shrink-0")}>
                 子菜单
               </Badge>
             )}
-            <span className="text-xs text-muted-foreground ml-auto">
+            <span className={cn(TYPOGRAPHY.caption, "ml-auto shrink-0")}>
               排序: {node.sort_order || node.sortOrder || 0}
             </span>
           </div>
@@ -168,9 +169,9 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
             variant="ghost"
             size="sm"
             onClick={() => handleEdit(node)}
-            className="h-8"
+            className="h-8 shrink-0"
           >
-            <Pencil className="h-3 w-3" />
+            <Pencil className="h-4 w-4" />
           </Button>
         </div>
         {hasChildren && isExpanded && (
@@ -231,8 +232,8 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">菜单管理</h2>
-          <p className="text-muted-foreground text-sm mt-1">
+          <h2 className={TYPOGRAPHY.pageTitle}>菜单管理</h2>
+          <p className={cn(TYPOGRAPHY.pageSubtitle, "mt-1")}>
             配置菜单的父子关系和排序顺序
           </p>
         </div>
@@ -244,7 +245,7 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
         </div>
       )}
 
-      <div className="border rounded-lg p-4 bg-card">
+      <div className={cn(CARD_STYLES.content, "p-5")}>
         <div className="space-y-1">
           {menuTree.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">

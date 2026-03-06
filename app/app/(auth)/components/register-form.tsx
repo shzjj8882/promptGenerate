@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle } from "@/components/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,7 +62,7 @@ export function RegisterForm() {
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormData>({
-    resolver: yupResolver(registerSchema) as any,
+    resolver: yupResolver(registerSchema) as Resolver<RegisterFormData>,
   });
 
   const onSubmit = async (data: RegisterFormData) => {

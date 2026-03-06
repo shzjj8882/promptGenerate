@@ -14,7 +14,7 @@ import { useTableForm } from "./hooks/use-table-form";
 import { useTableDelete } from "./hooks/use-table-delete";
 import { TableFormDialog } from "./components/table-form-dialog";
 import { MultiDimensionTable } from "@/lib/api/multi-dimension-tables";
-import { Table } from "lucide-react";
+import { Table } from "@/components/icons";
 import {
   MENU_BUTTON_PERMISSIONS,
   BUTTON_PERMISSIONS,
@@ -88,8 +88,7 @@ function TablesClientImpl({
       return;
     }
     fetchTables(currentPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, initialTables, initialPage]);
+  }, [currentPage, initialTables, initialPage, fetchTables]);
 
   return (
     <div className="flex h-full flex-col gap-6">

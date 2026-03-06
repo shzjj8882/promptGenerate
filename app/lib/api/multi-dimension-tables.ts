@@ -4,11 +4,18 @@
 
 import { apiRequest } from "./config";
 
+/** 列选项：选项列表、日期格式、默认值等（构建时使用） */
+export interface TableColumnOptions {
+  options?: string[];
+  format?: string;
+  defaultValue?: string;
+}
+
 export interface TableColumn {
   key: string;
   label: string;
   type?: string; // 字段类型：text（文本）、number（数字）、date（日期）、boolean（布尔值）、select（选择）等
-  options?: Record<string, any>; // 字段选项（如选择类型的选项列表、数字类型的范围等）
+  options?: TableColumnOptions; // 字段选项（如选择类型的选项列表、数字类型的范围等）
 }
 
 export interface MultiDimensionTable {
@@ -84,6 +91,27 @@ export interface TableRowsBulkSave {
   deleted_row_ids: string[];
 }
 
+/** 表格历史快照（与前端 HistoryState 对齐） */
+export interface HistoryStateSnapshot {
+  rows: TableRow[];
+  columns: TableColumn[];
+  stepLabel?: string;
+  stepType?: string;
+  stepTitle?: string;
+  stepDescription?: string;
+}
+
+/** 服务端返回的已完成历史记录条目 */
+export interface CompletedHistoryApiEntry {
+  id: string;
+  table_id: string;
+  team_id?: string;
+  label: string;
+  snapshot: HistoryStateSnapshot;
+  created_by?: string;
+  created_at: string;
+}
+
 export interface TableSearchRequest {
   table_id: string;
   row_id?: number;
@@ -117,6 +145,19 @@ export async function getTables(params?: GetTablesParams): Promise<PaginatedTabl
   if (params?.limit !== undefined) queryParams.append("limit", params.limit.toString());
   const queryString = queryParams.toString();
   return apiRequest<PaginatedTablesResponse>(`/admin/multi-dimension-tables${queryString ? `?${queryString}` : ""}`);
+}
+
+/** 获取多维表格的已完成历史记录（按时间倒序） */
+export async function getTableCompletedHistory(
+  tableId: string,
+  limit?: number
+): Promise<CompletedHistoryApiEntry[]> {
+  const queryParams = new URLSearchParams();
+  if (limit !== undefined) queryParams.append("limit", String(limit));
+  const queryString = queryParams.toString();
+  return apiRequest<CompletedHistoryApiEntry[]>(
+    `/admin/multi-dimension-tables/${tableId}/completed-history${queryString ? `?${queryString}` : ""}`
+  );
 }
 
 export async function getTable(tableId: string, includeRows: boolean = false): Promise<MultiDimensionTable> {

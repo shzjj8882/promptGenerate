@@ -3,7 +3,7 @@
 import { useCallback, useRef, useEffect } from "react";
 import { getDisplayMessage } from "@/lib/utils/error";
 import { showErrorToast } from "@/lib/utils/toast";
-import { ApiError } from "@/lib/api/config";
+import { ApiError, ABORT_ERROR_CODE } from "@/lib/api/config";
 
 interface UseErrorHandlerOptions {
   showToast?: boolean;
@@ -38,6 +38,12 @@ export function useErrorHandler(options: UseErrorHandlerOptions = {}) {
 
   const handleError = useCallback(
     (error: unknown, defaultMessage: string, customOptions?: UseErrorHandlerOptions) => {
+      // 请求已取消（AbortError）为预期行为，不提示用户
+      const isAborted = error instanceof ApiError && error.code === ABORT_ERROR_CODE;
+      if (isAborted) {
+        return "";
+      }
+
       const message = getDisplayMessage(error, defaultMessage);
       
       // 判断是否为业务错误（400 状态码的 ApiError，如登录密码错误）

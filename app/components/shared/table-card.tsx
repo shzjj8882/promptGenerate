@@ -1,9 +1,11 @@
 "use client";
 
 import { memo } from "react";
-import { Table } from "lucide-react";
+import { TableFile } from "@/components/icons";
 import { ActionButtons } from "@/components/shared/action-buttons";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { CARD_ICON_VARIANTS, CARD_STYLES, TYPOGRAPHY } from "@/lib/design-tokens";
 import type { MultiDimensionTable } from "@/lib/api/multi-dimension-tables";
 
 interface TableCardProps {
@@ -16,7 +18,7 @@ interface TableCardProps {
 
 /**
  * 多维表格卡片组件
- * 使用 React.memo 优化性能，避免不必要的重新渲染
+ * 遵循设计规范：icon 高度 100%，文字层级统一
  */
 export const TableCard = memo(function TableCard({
   table,
@@ -32,59 +34,64 @@ export const TableCard = memo(function TableCard({
   };
 
   return (
-    <div 
-      className="group relative rounded-lg border border-border bg-card p-5 shadow-sm transition-all duration-200 hover:border-primary/50 hover:shadow-md cursor-pointer"
+    <div
+      className={cn(
+        CARD_STYLES.listItem,
+        // Grid：左列 icon，右列 文本+操作；行高由右侧内容决定
+        "grid grid-cols-[auto_1fr] cursor-pointer items-stretch gap-4"
+      )}
       onClick={handleCardClick}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-4 flex-1 min-w-0">
-          <div className="flex-shrink-0 w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center">
-            <Table className="h-5 w-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-foreground mb-1 truncate">
-              {table.name}
-            </h3>
-            <p className="text-xs text-muted-foreground font-mono mb-2">{table.code}</p>
-            {table.description && (
-              <p className="text-sm text-muted-foreground line-clamp-2 break-words mb-3">
-                {table.description}
-              </p>
-            )}
-            
-            {/* 字段名称列表 */}
-            {table.columns && table.columns.length > 0 ? (
-              <div className="mb-3">
-                <p className="text-xs text-muted-foreground mb-1.5">字段：</p>
-                <div className="flex items-center gap-1 overflow-x-auto">
-                  {table.columns.slice(0, 10).map((col) => (
-                    <span
-                      key={col.key}
-                      className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground whitespace-nowrap flex-shrink-0"
-                    >
-                      {col.label}
-                    </span>
-                  ))}
-                  {table.columns.length > 10 && (
-                    <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground whitespace-nowrap flex-shrink-0">
-                      +{table.columns.length - 10}
-                    </span>
-                  )}
-                </div>
+      {/* 图标区：Grid 左列，单元格高度 = 行高；内层 h-full + aspect-square => 严格正方形，随行高自适应 */}
+      <div className="flex min-h-14 items-center justify-center self-stretch">
+        <div
+          className={cn(
+            "flex aspect-square h-full min-w-14 min-h-14 items-center justify-center rounded-lg",
+            CARD_ICON_VARIANTS.table
+          )}
+        >
+          <TableFile theme="outline" size={24} fill="#333" strokeLinejoin="miter" />
+        </div>
+      </div>
+      {/* 右列：文本 + 操作放在同一格里，避免多子元素导致第二行高度异常 */}
+      <div className="flex min-w-0 items-stretch justify-between gap-4">
+        <div className="flex flex-col justify-center min-w-0 py-0.5">
+          <h3 className={cn(TYPOGRAPHY.cardTitle, "truncate mb-0.5")}>{table.name}</h3>
+          <p className={cn(TYPOGRAPHY.caption, "font-mono mb-2")}>{table.code}</p>
+          {table.description && (
+            <p className={cn(TYPOGRAPHY.cardSubtitle, "line-clamp-2 break-words mb-2")}>
+              {table.description}
+            </p>
+          )}
+          {table.columns && table.columns.length > 0 ? (
+            <div className="mb-2">
+              <p className={cn(TYPOGRAPHY.caption, "mb-1")}>字段：</p>
+              <div className="flex flex-wrap gap-1">
+                {table.columns.slice(0, 10).map((col) => (
+                  <span
+                    key={col.key}
+                    className={cn(TYPOGRAPHY.caption, "px-1.5 py-0.5 bg-muted rounded whitespace-nowrap")}
+                  >
+                    {col.label}
+                  </span>
+                ))}
+                {table.columns.length > 10 && (
+                  <span className={cn(TYPOGRAPHY.caption, "px-1.5 py-0.5 bg-muted rounded")}>
+                    +{table.columns.length - 10}
+                  </span>
+                )}
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground mb-3">暂无字段</p>
-            )}
-            
-            {/* 统计信息 */}
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span>{table.columns?.length || 0} 列</span>
-              <span>•</span>
-              <span>{table.row_count ?? 0} 条数据</span>
             </div>
+          ) : (
+            <p className={cn(TYPOGRAPHY.caption, "mb-2")}>暂无字段</p>
+          )}
+          <div className={cn(TYPOGRAPHY.caption, "flex items-center gap-2")}>
+            <span>{table.columns?.length || 0} 列</span>
+            <span>•</span>
+            <span>{table.row_count ?? 0} 条数据</span>
           </div>
         </div>
-        <div onClick={(e) => e.stopPropagation()}>
+        <div onClick={(e) => e.stopPropagation()} className="shrink-0 self-start">
           <ActionButtons
             onEdit={onEdit ? () => onEdit(table) : undefined}
             onDelete={onDelete ? () => onDelete(table) : undefined}

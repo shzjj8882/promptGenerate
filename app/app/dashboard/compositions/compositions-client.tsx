@@ -1,18 +1,19 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react-lite";
 import {
-  MessageSquareText,
-  Globe,
+  Communication,
+  Api,
+  Agreement,
   Plus,
   Pencil,
   Trash2,
   Loader2,
   MoreHorizontal,
-  FileText,
   Search,
-} from "lucide-react";
+} from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +33,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { PromptDebugDialog } from "../prompts/components/prompt-debug-dialog";
+const PromptDebugDialog = dynamic(
+  () => import("../prompts/components/prompt-debug-dialog").then((m) => ({ default: m.PromptDebugDialog })),
+  { ssr: false }
+);
 import { fromNotificationConfig, type NotificationOption } from "./components/notification-option-picker";
 import { CompositionFormDialog } from "./components/composition-form-dialog";
 import { CompositionWizardDialog } from "./components/composition-wizard-dialog";
@@ -41,12 +45,13 @@ import { useTenants } from "../prompts/hooks/use-tenants";
 import { usePlaceholders } from "../prompts/hooks/use-placeholders";
 import { getSceneLabel } from "../prompts/utils/prompt-utils";
 import { getPromptBySceneTenant, getPrompt } from "@/lib/api/prompts";
-import type { Prompt, Tenant } from "../prompts/prompts-client";
-import type { Composition } from "@/lib/api/compositions";
+import type { Prompt } from "../prompts/prompts-client";
+import type { Composition, CompositionCreate, CompositionUpdate } from "@/lib/api/compositions";
 import { getLLMModels, type LLMModel } from "@/lib/api/llm-models";
 import { showSuccessToast, showErrorToast } from "@/lib/utils/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { PageHeader } from "@/components/shared/page-header";
+import { CardItem } from "@/components/shared/card-item";
 
 /** 从 notification_config 解析为展示文案（兼容 content_type / email_content_type） */
 function getNotificationLabel(comp: Composition): string {
@@ -67,7 +72,11 @@ function getNotificationOption(comp: Composition): NotificationOption | null {
 
 function CompositionsClientImpl() {
   const [isMounted, setIsMounted] = useState(false);
-  useEffect(() => setIsMounted(true), []);
+  // 用于避免 SSR hydration mismatch，必须在 mount 后设置
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentionally run once on mount for hydration
+    setIsMounted(true);
+  }, []);
 
   const {
     compositions,
@@ -82,6 +91,7 @@ function CompositionsClientImpl() {
     totalPages,
     searchKeyword,
     setSearchKeyword,
+    debouncedSearchKeyword,
   } = useCompositions();
   const { tenants, fetchTenants } = useTenants();
   const { placeholders, fetchPlaceholdersByScene } = usePlaceholders();
@@ -100,13 +110,13 @@ function CompositionsClientImpl() {
   }, [fetchTenants]);
 
   useEffect(() => {
-    fetchCompositions(currentPage, searchKeyword);
-  }, [currentPage, searchKeyword, fetchCompositions]);
+    fetchCompositions(currentPage, debouncedSearchKeyword);
+  }, [currentPage, debouncedSearchKeyword, fetchCompositions]);
 
   // 搜索关键词变化时重置到第一页
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchKeyword, setCurrentPage]);
+  }, [debouncedSearchKeyword, setCurrentPage]);
 
   useEffect(() => {
     getLLMModels({ limit: 500 }).then((r) => setModels(r?.items ?? []));
@@ -158,12 +168,12 @@ function CompositionsClientImpl() {
   );
 
   const handleSave = useCallback(
-    async (data: Record<string, unknown>) => {
+    async (data: CompositionCreate | CompositionUpdate) => {
       if (editing) {
-        await update(editing.id, data as Parameters<typeof update>[1]);
+        await update(editing.id, data);
         showSuccessToast("更新成功");
       } else {
-        await create(data as Parameters<typeof create>[0]);
+        await create(data as CompositionCreate);
         showSuccessToast("创建成功");
       }
       setFormOpen(false);
@@ -223,41 +233,34 @@ function CompositionsClientImpl() {
         <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="grid gap-4 grid-cols-1 w-full">
           {displayCompositions.map((comp) => (
-              <div
+              <CardItem
                 key={comp.id}
-                role="button"
-                tabIndex={0}
+                icon={
+                  comp.mode === "chat" ? (
+                    <Communication theme="outline" size={30} fill="#333" strokeLinejoin="miter" />
+                  ) : (
+                    <Api theme="outline" size={30} fill="#333" strokeLinejoin="miter" />
+                  )
+                }
+                iconVariant={comp.mode === "chat" ? "chat" : "api"}
+                title={comp.name}
+                subtitle={`${getSceneLabel(comp.scene)}${comp.mcp_id ? " · MCP" : ""}`}
+                footer={
+                  <>
+                    <Badge variant="outline" className="text-xs">
+                      大模型: {comp.model_id ? (modelMap[comp.model_id] ?? comp.model_id) : "未配置"}
+                    </Badge>
+                    {(comp.mode === "api" && comp.task_mode === "async") && (
+                      <Badge variant="outline" className="text-xs">
+                        通知: {getNotificationLabel(comp)}
+                      </Badge>
+                    )}
+                  </>
+                }
+                clickable
                 onDoubleClick={() => handleOpenPreview(comp)}
-                className="group flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:shadow-md hover:border-border/80 cursor-pointer"
-              >
-                <div className="flex items-stretch justify-between gap-3">
-                  <div className="flex min-w-0 flex-1 gap-3">
-                    <div className="flex w-16 h-16 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      {comp.mode === "chat" ? (
-                        <MessageSquareText className="h-10 w-10 text-primary" />
-                      ) : (
-                        <Globe className="h-10 w-10 text-primary" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-foreground truncate">{comp.name}</h3>
-                      <p className="mt-0.5 text-sm text-muted-foreground">
-                        {getSceneLabel(comp.scene)}
-                        {comp.mcp_id && " · MCP"}
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        <Badge variant="outline" className="text-xs">
-                          大模型: {comp.model_id ? (modelMap[comp.model_id] ?? comp.model_id) : "未配置"}
-                        </Badge>
-                        {(comp.mode === "api" && comp.task_mode === "async") && (
-                          <Badge variant="outline" className="text-xs">
-                            通知: {getNotificationLabel(comp)}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  {isMounted && (
+                actions={
+                  isMounted && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -273,7 +276,7 @@ function CompositionsClientImpl() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-[140px]">
                         <DropdownMenuItem onClick={() => handleOpenPreview(comp)}>
-                          <FileText className="mr-2 h-4 w-4" />
+                          <Agreement theme="outline" size={24} fill="#333" strokeLinejoin="miter" className="mr-2 shrink-0" />
                           文档
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => { setEditing(comp); setFormOpen(true); setWizardOpen(false); }}>
@@ -289,9 +292,9 @@ function CompositionsClientImpl() {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
             ))}
         </div>
         </div>

@@ -21,8 +21,13 @@ from app.models.multi_dimension_table import (
     MultiDimensionTableRow,
     MultiDimensionTableCell,
 )
+from app.services.team_usage_log_service import log_team_usage
+from app.services.team_quota_service import TeamQuotaService
 
 router = APIRouter(dependencies=[Depends(verify_optional_api_key)])
+
+# 多维表格 API 每次调用扣除的 token 数量
+TABLE_API_TOKENS_PER_CALL = 1
 
 
 async def get_table_by_code(
@@ -102,6 +107,10 @@ async def get_table_rows(
     # 这样可以确保查询时能正确过滤团队（特别是使用 X-Team-AuthCode 时）
     if not final_team_id and table.team_id:
         final_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
     
     # 查询行（使用 final_team_id，支持分页）
     if final_team_id:
@@ -123,6 +132,10 @@ async def get_table_rows(
     rows = result.scalars().all()
     
     if not rows:
+        # 用量统计：4=按条件查询（空结果也计入）
+        if final_team_id:
+            await log_team_usage(db, final_team_id, usage_type=4, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code}), business_name="多维表格-按条件查询")
+            await db.commit()
         return ResponseModel.success_response(
             data=[],
             message="获取行列表成功",
@@ -163,6 +176,11 @@ async def get_table_rows(
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         })
+    
+    # 用量统计：4=按条件查询
+    if final_team_id:
+        await log_team_usage(db, final_team_id, usage_type=4, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code}), business_name="多维表格-按条件查询")
+        await db.commit()
     
     return ResponseModel.success_response(
         data=rows_data,
@@ -209,11 +227,13 @@ async def get_table_row_ids(
     
     # 获取表格
     table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    table_id = table.id
-    
-    # 如果 final_team_id 为 None，但表格有 team_id，使用表格的 team_id
     if not final_team_id and table.team_id:
         final_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
+    table_id = table.id
     
     # 查询已存在的 row_id
     if final_team_id:
@@ -305,6 +325,12 @@ async def create_table_row(
     
     # 使用从认证信息中获取的 team_id（如果可用）
     row_team_id = final_team_id
+    if not row_team_id and table.team_id:
+        row_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if row_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, row_team_id, TABLE_API_TOKENS_PER_CALL)
     
     # 获取当前团队的最大 row_id（用于验证用户提供的 row_id 是否合法）
     if row_team_id:
@@ -439,6 +465,10 @@ async def create_table_row(
         )
         db.add(cell)
     
+    # 用量统计：1=单条新增
+    if row_team_id:
+        await log_team_usage(db, row_team_id, usage_type=1, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code}), business_name="多维表格-单条新增")
+    
     await db.commit()
     await db.refresh(new_row)
 
@@ -519,6 +549,10 @@ async def update_table_row_by_condition(
     # 这样可以确保查询时能正确过滤团队（特别是使用 X-Team-AuthCode 时）
     if not final_team_id and table.team_id:
         final_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
     
     condition = update_request.condition
     
@@ -685,6 +719,10 @@ async def update_table_row_by_condition(
         updated_row_ids.append(row.id)
         updated_count += 1
 
+    # 用量统计：2=按条件编辑
+    if final_team_id:
+        await log_team_usage(db, final_team_id, usage_type=2, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code, "updated_count": updated_count}), business_name="多维表格-按条件编辑")
+
     await db.commit()
     
     return ResponseModel.success_response(
@@ -734,8 +772,15 @@ async def delete_table_row_by_condition(
     """
     # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
     final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=final_team_id)
+    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
     table_id = table.id
+    if not final_team_id and table.team_id:
+        final_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
+    
     condition = delete_request.condition
     
     # 根据条件查找行
@@ -801,6 +846,10 @@ async def delete_table_row_by_condition(
         await db.delete(row)
         deleted_count += 1
     
+    # 用量统计：3=按条件删除
+    if final_team_id:
+        await log_team_usage(db, final_team_id, usage_type=3, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code, "deleted_count": deleted_count}), business_name="多维表格-按条件删除")
+    
     await db.commit()
     
     return ResponseModel.success_response(
@@ -842,8 +891,14 @@ async def update_table_row(
     """
     # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
     final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=final_team_id)
+    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
     table_id = table.id
+    if not final_team_id and table.team_id:
+        final_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
     
     # 检查行是否存在
     result = await db.execute(select(MultiDimensionTableRow).where(MultiDimensionTableRow.id == row_id))
@@ -930,8 +985,14 @@ async def delete_table_row(
     """
     # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
     final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=final_team_id)
+    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
     table_id = table.id
+    if not final_team_id and table.team_id:
+        final_team_id = table.team_id
+
+    # 配额校验并扣减：不足时返回 429
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
     
     # 检查行是否存在
     result = await db.execute(select(MultiDimensionTableRow).where(MultiDimensionTableRow.id == row_id))

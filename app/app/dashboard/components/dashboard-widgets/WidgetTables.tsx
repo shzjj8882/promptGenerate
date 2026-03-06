@@ -3,10 +3,9 @@
 import dynamic from "next/dynamic";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { LayoutGrid, Settings2, BarChart3, Table2 } from "lucide-react";
+import { LayoutGrid, Settings2, BarChart3, Table2, MinusCircle } from "@/components/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MinusCircle } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -22,16 +21,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { getTables, getTable, type MultiDimensionTable, type TableRow as TableRowType } from "@/lib/api/multi-dimension-tables";
 import type { TableChartConfig } from "@/app/dashboard/tables/components/table-chart-view";
+import { uiStore } from "@/store/ui-store";
+import { TableCanvasView } from "@/app/dashboard/config/tables/components";
 
 const TableChartView = dynamic(
   () => import("@/app/dashboard/tables/components/table-chart-view").then((m) => ({ default: m.TableChartView })),
@@ -47,6 +40,8 @@ export interface WidgetTablesConfig {
   chartCategoryColumnKey?: string;
   chartValueColumnKeys?: string[];
   chartPieAggregate?: "sum" | "count";
+  /** 控制台卡片中保存的列宽配置（存到 dashboard-config） */
+  tableColumnWidths?: Record<string, number>;
 }
 
 interface WidgetTablesProps {
@@ -61,6 +56,10 @@ interface WidgetTablesProps {
   tableChartPieAggregate?: "sum" | "count";
   onRemove?: (id: string) => void;
   onUpdateTable?: (widgetId: string, config: WidgetTablesConfig) => void;
+  /** 控制台卡片中保存的列宽配置（来自 dashboard-config） */
+  tableColumnWidths?: Record<string, number>;
+  /** 是否允许打开配置弹窗（由 DashboardGrid 控制，仅配置模式下为 true） */
+  allowConfig?: boolean;
 }
 
 export function WidgetTables({
@@ -75,6 +74,8 @@ export function WidgetTables({
   tableChartPieAggregate = "sum",
   onRemove,
   onUpdateTable,
+  tableColumnWidths,
+  allowConfig = false,
 }: WidgetTablesProps) {
   const [configOpen, setConfigOpen] = useState(false);
   const [tables, setTables] = useState<MultiDimensionTable[]>([]);
@@ -89,7 +90,7 @@ export function WidgetTables({
   const [table, setTable] = useState<MultiDimensionTable | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const canConfig = !!onUpdateTable;
+  const canConfig = allowConfig && !!onUpdateTable;
   const prevConfigOpen = useRef(false);
 
   const fetchTables = useCallback(async () => {
@@ -118,6 +119,14 @@ export function WidgetTables({
     }
     if (!configOpen) prevConfigOpen.current = false;
   }, [configOpen, tableId, columnKeys, tableDisplayMode, tableChartType, tableChartCategoryColumnKey, tableChartValueColumnKeys, tableChartPieAggregate, fetchTables]);
+
+  // 弹出配置对话框时，临时锁定 dashboard 拖拽，避免“穿透”拖动卡片
+  useEffect(() => {
+    uiStore.setDashboardDragLocked(configOpen);
+    return () => {
+      uiStore.setDashboardDragLocked(false);
+    };
+  }, [configOpen]);
 
   useEffect(() => {
     if (configOpen && selectedTableId) {
@@ -160,7 +169,7 @@ export function WidgetTables({
   };
 
   const handleConfirmConfig = () => {
-    if (selectedTableId && onUpdateTable) {
+    if (allowConfig && selectedTableId && onUpdateTable) {
       onUpdateTable(widgetId, {
         tableId: selectedTableId,
         columnKeys: selectedColumnKeys,
@@ -194,6 +203,34 @@ export function WidgetTables({
       : table.columns
     : [];
   const rows = table?.rows ?? [];
+
+  // 配置弹窗「确定」按钮可用性诊断
+  const isNoTableSelected = !selectedTableId;
+  const isTableModeNoColumnsSelected =
+    displayMode === "table" && !!tableMeta?.columns?.length && selectedColumnKeys.length === 0;
+  const isChartModeInvalid =
+    displayMode === "chart" &&
+    (!chartCategoryKey ||
+      ((chartType !== "pie" || chartPieAggregate === "sum") && chartValueKeys.length === 0));
+  const isConfirmDisabled = isNoTableSelected || isTableModeNoColumnsSelected || isChartModeInvalid;
+
+  // 调试用：打印每个条件
+  if (configOpen) {
+    // 仅在弹窗打开时打印，避免刷屏
+    console.log("[WidgetTables][confirm-disabled]", {
+      selectedTableId,
+      displayMode,
+      selectedColumnKeysLength: selectedColumnKeys.length,
+      chartCategoryKey,
+      chartType,
+      chartPieAggregate,
+      chartValueKeysLength: chartValueKeys.length,
+      isNoTableSelected,
+      isTableModeNoColumnsSelected,
+      isChartModeInvalid,
+      isConfirmDisabled,
+    });
+  }
 
   return (
     <>
@@ -248,44 +285,33 @@ export function WidgetTables({
                 />
               </div>
             ) : (
-              <>
-              <div className="flex-1 min-h-0 overflow-auto border rounded-md">
+              <div className="flex-1 min-h-0 overflow-hidden border rounded-md">
                 {displayColumns.length > 0 && rows.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-muted/50">
-                        <TableHead className="w-12 text-xs">#</TableHead>
-                        {displayColumns.map((col) => (
-                          <TableHead key={col.key} className="text-xs">
-                            {col.label}
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.slice(0, size === "small" ? 5 : size === "medium" ? 10 : 20).map((row) => (
-                        <TableRow key={row.id}>
-                          <TableCell className="text-xs text-muted-foreground py-1.5">
-                            {row.row_id}
-                          </TableCell>
-                          {displayColumns.map((col) => (
-                            <TableCell key={col.key} className="text-xs py-1.5 max-w-[120px] truncate">
-                              {row.cells?.[col.key] ?? "-"}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <TableCanvasView
+                    table={{ ...table, columns: displayColumns }}
+                    rows={rows as TableRowType[]}
+                    loading={false}
+                    onCellChange={() => {}}
+                    onAddRow={() => {}}
+                    onDeleteColumn={() => {}}
+                    onEditColumn={() => {}}
+                    readOnly
+                    persistColumnWidths={false}
+                    initialColumnWidths={tableColumnWidths}
+                    onColumnWidthsChange={(widths) => {
+                      if (!onUpdateTable || !table) return;
+                      onUpdateTable(widgetId, {
+                        tableId: table.id,
+                        tableColumnWidths: widths,
+                      });
+                    }}
+                  />
                 ) : (
                   <div className="p-4 text-center text-sm text-muted-foreground">
-                    {displayColumns.length === 0
-                      ? "请配置要展示的列"
-                      : "暂无数据"}
+                    {displayColumns.length === 0 ? "请配置要展示的列" : "暂无数据"}
                   </div>
                 )}
               </div>
-            </>
             )
           ) : canConfig ? (
             <div className="flex flex-col gap-2">
@@ -369,11 +395,10 @@ export function WidgetTables({
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
                     <Checkbox
                       checked={
+                        tableMeta.columns.length > 0 &&
                         selectedColumnKeys.length === tableMeta.columns.length
                       }
-                      onCheckedChange={(c) =>
-                        handleSelectAllColumns(c === true)
-                      }
+                      onCheckedChange={(c) => handleSelectAllColumns(c)}
                     />
                     全选
                   </label>
@@ -471,11 +496,7 @@ export function WidgetTables({
             </Button>
             <Button
               onClick={handleConfirmConfig}
-              disabled={
-                !selectedTableId ||
-                (displayMode === "table" && tableMeta?.columns?.length ? selectedColumnKeys.length === 0 : false) ||
-                (displayMode === "chart" && (!chartCategoryKey || ((chartType !== "pie" || chartPieAggregate === "sum") && chartValueKeys.length === 0)))
-              }
+              disabled={isConfirmDisabled}
             >
               确定
             </Button>

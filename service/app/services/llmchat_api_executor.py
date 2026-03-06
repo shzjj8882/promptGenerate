@@ -13,6 +13,8 @@ from app.services.llm_model_service import LLMModelService
 from app.services.llm_service import LLMService
 from app.services.mcp_service import MCPService
 from app.services.mcp_llm_integration import chat_with_mcp_tools
+from app.services.team_quota_service import TeamQuotaService
+from app.services.team_usage_log_service import log_team_usage
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,12 +30,38 @@ def _get_llmchat_helpers():
     return check_if_tenant_required, process_placeholders_in_content, LLMConfig
 
 
+async def check_llm_quota_before_stream(
+    db: AsyncSession,
+    team_id: Optional[str],
+    model_id: Optional[str],
+    request_dict: Dict[str, Any],
+) -> None:
+    """
+    在流式响应开始前校验并扣减配额。必须在返回 StreamingResponse 之前调用，
+    否则 429 会在流已启动后抛出，导致 "response already started" 错误。
+    """
+    if not model_id:
+        return
+    model = await LLMModelService.get_model_by_id(db, model_id)
+    if not model:
+        return
+    llm_config_raw = request_dict.get("llm_config") or {}
+    max_tokens = llm_config_raw.get("max_tokens") or model.default_max_tokens
+    await TeamQuotaService.check_and_consume_tokens(
+        db=db,
+        team_id=team_id,
+        requested_tokens=max_tokens,
+    )
+
+
 async def execute_api_prompt_request(
     db: AsyncSession,
     scene: str,
     request_dict: Dict[str, Any],
     team_code: Optional[str] = None,
     team_id: Optional[str] = None,
+    *,
+    skip_quota_check: bool = False,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     执行 API 模式的 LLM 调用
@@ -111,6 +139,14 @@ async def execute_api_prompt_request(
     if model.default_max_tokens:
         llm_config.max_tokens = model.default_max_tokens
 
+    # 在创建 LLMService 之前先扣减当月 token 配额（若配置了团队与配额）；Admin 调试时跳过
+    if not skip_quota_check:
+        await TeamQuotaService.check_and_consume_tokens(
+            db=db,
+            team_id=team_id,
+            requested_tokens=llm_config.max_tokens,
+        )
+
     llm_service = LLMService(
         api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
         api_base=model.api_base or getattr(settings, "DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
@@ -171,12 +207,31 @@ async def execute_api_prompt_request(
                 temperature=llm_config.temperature or 0.3,
                 max_tokens=llm_config.max_tokens,
             )
+            tokens_to_log = llm_config.max_tokens or 512  # MCP 多轮调用无汇总 usage，用 max_tokens 近似
         else:
-            response_text = await llm_service.chat_with_messages(
+            response = await llm_service.chat(
                 messages=messages,
                 temperature=llm_config.temperature or 0.3,
                 max_tokens=llm_config.max_tokens,
             )
+            response_text = (
+                response["choices"][0]["message"]["content"]
+                if response.get("choices") and len(response["choices"]) > 0
+                else ""
+            )
+            usage_info = response.get("usage") or {}
+            tokens_to_log = usage_info.get("total_tokens") or (
+                (usage_info.get("prompt_tokens") or 0) + (usage_info.get("completion_tokens") or 0)
+            ) or (llm_config.max_tokens or 512)
+        # 用量统计：5=组合 LLM、接口查询（记录实际 token 消耗，供按日/按业务统计）
+        if team_id:
+            await log_team_usage(
+                db, team_id, usage_type=5,
+                tokens_used=tokens_to_log or 0,
+                extra_info=json.dumps({"scene": scene, "mode": "api_sync"}),
+                business_name="组合LLM接口",
+            )
+            await db.commit()
         return response_text, None
     except Exception as e:
         return None, str(e)
@@ -256,6 +311,8 @@ async def stream_llm_chat_request(
     if model.default_max_tokens:
         llm_config.max_tokens = model.default_max_tokens
 
+    # 配额已在流开始前校验（check_llm_quota_before_stream），此处不再重复
+
     llm_service = LLMService(
         api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
         api_base=model.api_base or getattr(settings, "DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
@@ -330,6 +387,16 @@ async def stream_llm_chat_request(
             ):
                 full_response += chunk
                 yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+        # 用量统计：5=组合 LLM、接口查询（流式无 usage 时用 max_tokens 近似，与 consume 一致）
+        if team_id:
+            tokens_to_log = llm_config.max_tokens or 512
+            await log_team_usage(
+                db, team_id, usage_type=5,
+                tokens_used=tokens_to_log,
+                extra_info=json.dumps({"scene": scene, "mode": "api_stream"}),
+                business_name="组合LLM接口",
+            )
+            await db.commit()
         yield "data: [DONE]\n\n"
     except Exception as e:
         logger.exception("LLM 流式调用失败")

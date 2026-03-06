@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Settings2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Settings2 } from "@/components/icons";
 import { getScenes, createScene, updateScene, deleteScene, type Scene, type SceneCreate, type SceneUpdate } from "@/lib/api/scenes";
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { SceneCreateDialog } from "@/app/dashboard/prompts/components/scene-create-dialog";

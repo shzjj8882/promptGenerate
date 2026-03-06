@@ -40,7 +40,7 @@ import {
   ChevronLeft,
   Settings2,
   Check,
-} from "lucide-react";
+} from "@/components/icons";
 import { observer } from "mobx-react-lite";
 import { uiStore } from "@/store/ui-store";
 import { dashboardStore } from "@/store/dashboard-store";
@@ -110,6 +110,7 @@ function userHasMenuCode(user: { is_superuser?: boolean; is_team_admin?: boolean
 }
 
 import { DashboardNav } from "@/components/shared/dashboard-nav";
+import { ErrorBoundary } from "@/components/shared/error-boundary";
 
 // 避免在开发模式下 React StrictMode 导致 /me 请求触发两次
 let didFetchCurrentUser = false;
@@ -696,13 +697,13 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
 
         {/* 工作台首页：内容直接在最外层，背景和边距与 main 一致，允许滚动 */}
         {pathname === "/dashboard" ? (
-          <div className="flex flex-1 flex-col min-w-0 overflow-y-auto overflow-x-hidden bg-muted/30 p-4 dark:bg-background custom-scrollbar">
+          <div className="flex flex-1 flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden bg-muted/30 p-4 dark:bg-background custom-scrollbar">
             {requiredMenuCode != null && !canAccessCurrentRoute ? (
               <div className="flex flex-1 items-center justify-center text-muted-foreground">
                 {token && userStore.user === null ? "加载中..." : "正在跳转..."}
               </div>
             ) : (
-              children
+              <ErrorBoundary>{children}</ErrorBoundary>
             )}
           </div>
         ) : (
@@ -742,7 +743,7 @@ function DashboardLayoutImpl({ children }: { children: ReactNode }) {
                   {token && userStore.user === null ? "加载中..." : "正在跳转..."}
                 </div>
               ) : (
-                children
+                <ErrorBoundary>{children}</ErrorBoundary>
               )}
             </div>
           </main>

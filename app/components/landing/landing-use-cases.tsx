@@ -5,7 +5,7 @@ import {
   Headphones,
   BarChart3,
   Bot,
-} from "lucide-react";
+} from "@/components/icons";
 import { LandingAnimateIn } from "./landing-animate-in";
 
 const useCases = [

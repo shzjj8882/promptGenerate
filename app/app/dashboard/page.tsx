@@ -28,6 +28,7 @@ function DashboardPageImpl() {
         chartCategoryColumnKey?: string;
         chartValueColumnKeys?: string[];
         chartPieAggregate?: "sum" | "count";
+        tableColumnWidths?: Record<string, number>;
       }
     ) => {
       dashboardStore.updateWidgetConfig(widgetId, {
@@ -38,7 +39,22 @@ function DashboardPageImpl() {
         tableChartCategoryColumnKey: config.chartCategoryColumnKey,
         tableChartValueColumnKeys: config.chartValueColumnKeys,
         tableChartPieAggregate: config.chartPieAggregate,
+        tableColumnWidths: config.tableColumnWidths,
       });
+    },
+    []
+  );
+
+  const handleUpdateTeamCodeConfig = useCallback(
+    (
+      widgetId: string,
+      config: {
+        teamCodeDisplayMode: "authcode" | "usage" | "chart";
+        teamCodeUsageCard?: "package" | "extra" | "rollover";
+        teamCodeChartType?: "line" | "pie";
+      }
+    ) => {
+      dashboardStore.updateWidgetConfig(widgetId, config);
     },
     []
   );
@@ -62,15 +78,17 @@ function DashboardPageImpl() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex-1 min-h-0">
+    <div className="flex flex-1 min-h-0 flex-col">
+      <div className="flex-1 min-h-[400px]">
         <DashboardGrid
           layout={dashboardStore.layout}
           onLayoutChange={handleLayoutChange}
           onRemove={(id) => dashboardStore.removeWidget(id)}
           onUpdateTableConfig={handleUpdateTableConfig}
+          onUpdateTeamCodeConfig={handleUpdateTeamCodeConfig}
           loading={dashboardStore.loading}
           isConfiguring={uiStore.dashboardConfigMode}
+          dragLocked={uiStore.dashboardDragLocked}
           onDrop={handleDrop}
         />
       </div>

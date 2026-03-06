@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { ChevronRight, Users } from "lucide-react";
+import { ChevronRight } from "@/components/icons";
 import { observer } from "mobx-react-lite";
 import { uiStore } from "@/store/ui-store";
 import { userStore } from "@/store/user-store";
@@ -89,7 +89,7 @@ const MenuItemComponent = ({ item, pathname, collapsed, level = 0 }: {
                   "h-3 w-3 shrink-0 transition-transform chevron-icon",
                   isExpanded && "rotate-90"
                 )}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   setIsExpanded(!isExpanded);
@@ -164,9 +164,12 @@ const DashboardNavImpl = ({ collapsedOverride }: DashboardNavProps = {}) => {
   const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
   const collapsed = collapsedOverride ?? uiStore.sidebarCollapsed;
-  // 直接从 store 读取菜单树（MobX 会自动响应式更新）
   const rawMenuTree = userStore.menuTree;
-  const menuTree = filterMenuTreeByBackendPermission(rawMenuTree, userStore.user);
+  const user = userStore.user;
+  const menuTree = useMemo(
+    () => filterMenuTreeByBackendPermission(rawMenuTree, user),
+    [rawMenuTree, user]
+  );
   const loading = userStore.menuTreeLoading || (!userStore.user && rawMenuTree.length === 0);
 
   useEffect(() => setMounted(true), []);

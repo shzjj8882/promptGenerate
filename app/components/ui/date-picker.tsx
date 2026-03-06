@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Calendar as CalendarIcon } from "lucide-react";
+import { CalendarIcon } from "@/components/icons";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -84,6 +84,8 @@ export interface DatePickerProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  /** 挂载时自动打开日历（用于表格单元格点击即编辑场景） */
+  autoOpen?: boolean;
 }
 
 export function DatePicker({
@@ -93,8 +95,13 @@ export function DatePicker({
   placeholder = "选择日期",
   className,
   disabled,
+  autoOpen = false,
 }: DatePickerProps) {
   const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (autoOpen) setOpen(true);
+  }, [autoOpen]);
   const [selectedDate, setSelectedDate] = React.useState<Date | undefined>(
     value ? (() => {
       try {

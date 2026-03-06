@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus } from "lucide-react";
+import { Plus } from "@/components/icons";
 import { Role, PermissionsGroupedRawResponse } from "@/lib/api/rbac";
 import { cn } from "@/lib/utils";
 import { MENU_BUTTON_PERMISSIONS, useHasMenuButtonPermission } from "@/lib/permissions";

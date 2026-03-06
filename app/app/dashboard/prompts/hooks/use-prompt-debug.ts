@@ -25,7 +25,7 @@ interface UsePromptDebugOptions {
   tenantCode: string;
   llmConfig: LLMConfig;
   // 支持嵌套对象结构：{key: {condition_field: value}} 或 {key: value}
-  placeholderParams: Record<string, any>;
+  placeholderParams: Record<string, unknown>;
   debugMode: "chat" | "api";
   modelId?: string;
   mcpId?: string;
@@ -115,7 +115,7 @@ export function usePromptDebug({
       }
 
       if (compositionApiUrl) {
-        // 组合 API：使用自定义 URL（tenantId 在 path 中，不传 tenantCode）
+        // 组合 Admin 调试：使用 /admin 接口，仅 Bearer Token（team 取自当前用户）
         const { compositionChatRequest, compositionApiRequest } = (() => {
           const base = { ...chatRequest };
           delete (base as any).tenantCode;
@@ -125,11 +125,9 @@ export function usePromptDebug({
           };
         })();
         const token = getAuthToken();
-        const teamAuthcode = userStore.user?.team_authcode;
         const headers: HeadersInit = {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(teamAuthcode ? { "X-Team-AuthCode": teamAuthcode } : {}),
         };
 
         if (debugMode === "chat") {
@@ -138,7 +136,21 @@ export function usePromptDebug({
             headers,
             body: JSON.stringify(compositionChatRequest),
           });
-          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            const msg =
+              err.detail ||
+              err.message ||
+              (res.status === 429 ? "本月团队 token 配额已用完，请联系管理员扩容或续费" : `HTTP error! status: ${res.status}`);
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") last.content = `错误: ${msg}`;
+              return next;
+            });
+            setStreaming(false);
+            return;
+          }
           const reader = res.body?.getReader();
           if (!reader) throw new Error("无法获取响应流");
           const decoder = new TextDecoder();

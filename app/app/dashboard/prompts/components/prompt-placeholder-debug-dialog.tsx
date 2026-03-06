@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { FileText, Loader2 } from "lucide-react";
+import { FileText, Loader2 } from "@/components/icons";
 import {
   Dialog,
   DialogContent,

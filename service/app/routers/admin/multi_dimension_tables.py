@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, delete
 from typing import List, Optional
+from datetime import datetime
 import json
 import uuid
 from app.core.database import get_db
@@ -28,11 +29,15 @@ from app.schemas.multi_dimension_table import (
     TableRowDeleteByCondition,
     TableRowUpdateByCondition,
     TableRowQueryByConditions,
+    CompletedHistoryCreate,
+    CompletedHistoryResponse,
+    HistoryStateSnapshot,
 )
 from app.models.multi_dimension_table import (
     MultiDimensionTable,
     MultiDimensionTableRow,
     MultiDimensionTableCell,
+    MultiDimensionTableHistory,
 )
 
 router = APIRouter()
@@ -79,7 +84,9 @@ async def get_table_by_code_or_id(
     table = result.scalar_one_or_none()
     
     if table:
-        # 权限检查
+        # 权限检查：超级管理员仅能访问系统级表格，普通用户仅能访问本团队表格
+        if current_user.is_superuser and table.team_id is not None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
         if not current_user.is_superuser and table.team_id != current_user.team_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
         return table
@@ -98,7 +105,9 @@ async def get_table_by_code_or_id(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能访问系统级表格，普通用户仅能访问本团队表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     
@@ -115,19 +124,23 @@ async def get_tables(
     current_user: UserResponse = Depends(require_tables_list_permission),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取多维表格列表（按用户角色和团队过滤，支持分页）"""
+    """获取多维表格列表（按用户角色和团队过滤，支持分页）
+    超级管理员仅显示系统级表格（team_id 为空），不显示各团队表格
+    """
     # 构建查询
     base_query = select(MultiDimensionTable).where(MultiDimensionTable.is_active == True)
     
-    # 如果不是超级管理员，只显示自己团队的表格
-    if not current_user.is_superuser:
+    # 超级管理员：仅显示系统级表格（team_id 为空），与工作台配置一致
+    # 普通用户：按团队过滤
+    if current_user.is_superuser:
+        base_query = base_query.where(MultiDimensionTable.team_id.is_(None))
+    else:
         if current_user.team_id:
             base_query = base_query.where(MultiDimensionTable.team_id == current_user.team_id)
         else:
-            # 没有团队的用户只能看到没有团队的表格
             base_query = base_query.where(MultiDimensionTable.team_id.is_(None))
     
-    # 如果指定了 team_id，进一步过滤
+    # 如果指定了 team_id，进一步过滤（非超级管理员场景）
     if team_id:
         base_query = base_query.where(MultiDimensionTable.team_id == team_id)
     
@@ -135,7 +148,9 @@ async def get_tables(
     count_query = select(func.count(MultiDimensionTable.id)).where(
         MultiDimensionTable.is_active == True
     )
-    if not current_user.is_superuser:
+    if current_user.is_superuser:
+        count_query = count_query.where(MultiDimensionTable.team_id.is_(None))
+    else:
         if current_user.team_id:
             count_query = count_query.where(MultiDimensionTable.team_id == current_user.team_id)
         else:
@@ -202,6 +217,80 @@ async def get_tables(
     )
 
 
+@router.get(
+    "/multi-dimension-tables/{table_id}/completed-history",
+    summary="获取多维表格已完成历史记录（用于回滚）",
+)
+async def get_completed_history(
+    table_id: str,
+    limit: int = Query(50, ge=1, le=200, description="返回的最大记录数，按时间倒序"),
+    current_user: UserResponse = Depends(require_tables_list_permission),
+    db: AsyncSession = Depends(get_db),
+):
+    """按时间倒序获取某个多维表格的已完成历史记录（保存 / 接口操作快照）。"""
+    # 确认表格存在且有权限访问
+    result = await db.execute(select(MultiDimensionTable).where(MultiDimensionTable.id == table_id))
+    table = result.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
+
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
+    if not current_user.is_superuser and table.team_id != current_user.team_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
+
+    query = (
+        select(MultiDimensionTableHistory)
+        .where(MultiDimensionTableHistory.table_id == table_id)
+        .order_by(MultiDimensionTableHistory.created_at.desc())
+        .limit(limit)
+    )
+    # 非超级管理员仅看自己团队的历史
+    if not current_user.is_superuser and current_user.team_id:
+        query = query.where(MultiDimensionTableHistory.team_id == current_user.team_id)
+
+    history_result = await db.execute(query)
+    items = history_result.scalars().all()
+
+    data: list[CompletedHistoryResponse] = []
+    for item in items:
+        try:
+            snapshot_dict = json.loads(item.snapshot)
+        except Exception:
+            snapshot_dict = {}
+        snapshot = HistoryStateSnapshot(**snapshot_dict) if snapshot_dict else HistoryStateSnapshot(rows=[], columns=[])
+        data.append(
+            CompletedHistoryResponse(
+                id=item.id,
+                table_id=item.table_id,
+                team_id=item.team_id,
+                label=item.label,
+                snapshot=snapshot,
+                created_by=item.created_by,
+                created_at=item.created_at,
+            )
+        )
+
+    serialized = [
+        {
+            "id": h.id,
+            "table_id": h.table_id,
+            "team_id": h.team_id,
+            "label": h.label,
+            "snapshot": h.snapshot.model_dump(),
+            "created_by": h.created_by,
+            "created_at": h.created_at.isoformat() if h.created_at else None,
+        }
+        for h in data
+    ]
+
+    return ResponseModel.success_response(
+        data=serialized,
+        message="获取已完成历史记录成功",
+        code=status.HTTP_200_OK,
+    )
+
+
 @router.get("/multi-dimension-tables/{table_id}", summary="获取多维表格详情")
 async def get_table(
     table_id: str,
@@ -216,10 +305,11 @@ async def get_table(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查：非超级管理员只能查看自己团队的表格
-    if not current_user.is_superuser:
-        if table.team_id != current_user.team_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
+    # 权限检查：超级管理员仅能访问系统级表格，普通用户仅能访问本团队表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
+    if not current_user.is_superuser and table.team_id != current_user.team_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     
     table_dict = {
         "id": table.id,
@@ -491,7 +581,9 @@ async def update_table(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能修改系统级表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改该表格")
     
@@ -741,6 +833,46 @@ async def update_table(
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             })
+
+            # 在服务端记录一条「已完成历史记录」，仅当有行数据时写入
+            try:
+                snapshot = HistoryStateSnapshot(
+                    rows=[
+                        MultiDimensionTableRowResponse(
+                            id=row["id"],
+                            table_id=row["table_id"],
+                            row_id=row["row_id"],
+                            team_id=row["team_id"],
+                            team_code=row["team_code"],
+                            row_data=row["row_data"],
+                            cells=row["cells"],
+                            created_by=row["created_by"],
+                            updated_by=row["updated_by"],
+                            created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")) if row["created_at"] else datetime.now(),
+                            updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")) if row["updated_at"] else datetime.now(),
+                        )
+                        for row in saved_rows
+                    ],
+                    columns=[TableColumn(**col) for col in (json.loads(table.columns) if table.columns else [])],
+                    stepLabel="保存数据",
+                    stepType="update",
+                    stepTitle="保存数据",
+                    stepDescription="控制台保存表格数据",
+                )
+                # mode='json' 使 datetime 等转为可 JSON 序列化的类型
+                snapshot_json = json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False)
+                history = MultiDimensionTableHistory(
+                    table_id=table_id,
+                    team_id=table.team_id,
+                    label="保存数据",
+                    snapshot=snapshot_json,
+                    created_by=current_user.id,
+                )
+                db.add(history)
+                await db.commit()
+            except Exception:
+                # 历史记录失败不影响主流程
+                await db.rollback()
     
     table_dict = {
         "id": table.id,
@@ -781,7 +913,9 @@ async def delete_table(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能删除系统级表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权删除该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权删除该表格")
     
@@ -1049,12 +1183,14 @@ async def get_table_rows(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能访问系统级表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     
     # 确定团队 ID
-    target_team_id = team_id or current_user.team_id
+    target_team_id = team_id or (current_user.team_id if not current_user.is_superuser else None)
     
     # 查询行（支持分页）
     row_query = select(MultiDimensionTableRow).where(
@@ -1218,7 +1354,9 @@ async def create_table_row(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能在系统级表格中创建行
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权在该表格中创建行")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权在该表格中创建行")
     
@@ -1377,6 +1515,8 @@ async def query_table_rows_by_conditions(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     
@@ -1653,7 +1793,9 @@ async def update_table_row_by_condition(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能修改系统级表格中的行
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改该表格中的行")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改该表格中的行")
     
@@ -1997,7 +2139,9 @@ async def delete_table_row_by_condition(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能删除系统级表格中的行
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权删除该表格中的行")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权删除该表格中的行")
     
@@ -2422,7 +2566,9 @@ async def bulk_save_table_rows(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能修改系统级表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改该表格")
     
@@ -2733,12 +2879,14 @@ async def search_table(
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="表格不存在")
     
-    # 权限检查
+    # 权限检查：超级管理员仅能访问系统级表格
+    if current_user.is_superuser and table.team_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     if not current_user.is_superuser and table.team_id != current_user.team_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该表格")
     
     # 构建查询条件
-    team_id = search_request.team_id or current_user.team_id
+    team_id = search_request.team_id or (current_user.team_id if not current_user.is_superuser else None)
     
     query = select(MultiDimensionTableRow).where(
         and_(

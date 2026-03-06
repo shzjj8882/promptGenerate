@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Settings2 } from "lucide-react";
+import { Plus, Settings2 } from "@/components/icons";
 import {
   getLLMModels,
   createLLMModel,
@@ -68,7 +68,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { userStore } from "@/store/user-store";
+import { ModelLogo } from "@/components/shared/model-logo";
 
 const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
@@ -94,7 +94,7 @@ function ModelsConfigClientImpl() {
     showToast: true,
   });
 
-  const fetchModels = async () => {
+  const fetchModels = useCallback(async () => {
     try {
       setLoading(true);
       const response = await getLLMModels({ limit: 500 });
@@ -104,12 +104,12 @@ function ModelsConfigClientImpl() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [handleError]);
 
   useEffect(() => {
     setMounted(true);
     fetchModels();
-  }, []);
+  }, [fetchModels]);
 
   const handleCreate = async () => {
     try {
@@ -215,7 +215,15 @@ function ModelsConfigClientImpl() {
             {renderSortIcon(column.getIsSorted())}
           </Button>
         ),
-        cell: ({ row }) => <div className="font-medium">{row.original.name}</div>,
+        cell: ({ row }) => (
+          <ModelLogo
+            provider={row.original.provider}
+            model={row.original.model}
+            name={row.original.name}
+            size={28}
+            showName
+          />
+        ),
       },
       {
         accessorKey: "provider",
@@ -464,13 +472,13 @@ function ModelsConfigClientImpl() {
                   value={formData.provider || ""}
                   onValueChange={(value) => setFormData({ ...formData, provider: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="选择提供商" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                     {PROVIDERS.map((p) => (
                       <SelectItem key={p.value} value={p.value}>
-                        {p.label}
+                        <ModelLogo provider={p.value} name={p.label} size={20} showName />
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -580,13 +588,13 @@ function ModelsConfigClientImpl() {
                   value={formData.provider || ""}
                   onValueChange={(value) => setFormData({ ...formData, provider: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="选择提供商" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                     {PROVIDERS.map((p) => (
                       <SelectItem key={p.value} value={p.value}>
-                        {p.label}
+                        <ModelLogo provider={p.value} name={p.label} size={20} showName />
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -677,7 +685,7 @@ function ModelsConfigClientImpl() {
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              确定要删除模型 "{selectedModel?.name}" 吗？此操作不可撤销。
+              确定要删除模型「{selectedModel?.name}」吗？此操作不可撤销。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

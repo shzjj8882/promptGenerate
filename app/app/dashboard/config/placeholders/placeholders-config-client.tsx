@@ -23,11 +23,10 @@ import { DEFAULT_PAGE_SIZE } from "@/lib/constants";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Pencil, Trash2, Settings2 } from "lucide-react";
+import { Plus, Settings2 } from "@/components/icons";
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -169,8 +168,7 @@ function PlaceholdersConfigClientImpl({
       return;
     }
     fetchPlaceholders(currentPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, initialPlaceholders, initialPage]);
+  }, [currentPage, initialPlaceholders, initialPage, fetchPlaceholders]);
 
   const handleCreatePlaceholder = () => {
     setEditingPlaceholder(null);
@@ -190,16 +188,13 @@ function PlaceholdersConfigClientImpl({
     setPlaceholderLabel(placeholder.label);
     setPlaceholderDescription(placeholder.description || "");
     
-    // 解析数据源类型（从 method_params 或其他字段推断，这里简化处理）
-    // 实际应该从数据库字段 data_source_type 读取
-    const sourceType = (placeholder as any).data_source_type || "user_input";
-    setDataSourceType(sourceType as "user_input" | "multi_dimension_table");
-    setDataType((placeholder as any).data_type || "string");
-    
-    // 如果是多维表格类型，解析相关字段
+    const sourceType = placeholder.data_source_type || "user_input";
+    setDataSourceType(sourceType);
+    setDataType(placeholder.data_type || "string");
+
     if (sourceType === "multi_dimension_table") {
-      setSelectedTableId((placeholder as any).table_id || "");
-      setSelectedColumnKey((placeholder as any).table_column_key || "");
+      setSelectedTableId(placeholder.table_id || "");
+      setSelectedColumnKey(placeholder.table_column_key || "");
       // table_row_id_param_key 由接口调用时自动获取，不需要用户填写
     } else {
       setSelectedTableId("");
@@ -355,7 +350,7 @@ function PlaceholdersConfigClientImpl({
       },
       {
         id: "data_source_type",
-        accessorFn: (row) => (row as any).data_source_type || "user_input",
+        accessorFn: (row) => (row as Placeholder).data_source_type || "user_input",
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -368,7 +363,7 @@ function PlaceholdersConfigClientImpl({
           </Button>
         ),
         cell: ({ row }) => {
-          const sourceType = (row.original as any).data_source_type || "user_input";
+          const sourceType = (row.original as Placeholder).data_source_type || "user_input";
           return (
             <Badge variant={sourceType === "user_input" ? "default" : "secondary"}>
               {sourceType === "user_input" ? "用户输入" : "多维表格"}
@@ -378,7 +373,7 @@ function PlaceholdersConfigClientImpl({
       },
       {
         id: "data_type",
-        accessorFn: (row) => (row as any).data_type || "string",
+        accessorFn: (row) => (row as Placeholder).data_type || "string",
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -391,7 +386,7 @@ function PlaceholdersConfigClientImpl({
           </Button>
         ),
         cell: ({ row }) => (
-          <div className="text-sm">{(row.original as any).data_type || "string"}</div>
+          <div className="text-sm">{(row.original as Placeholder).data_type || "string"}</div>
         ),
       },
       {
@@ -740,7 +735,7 @@ function PlaceholdersConfigClientImpl({
 
             {dataSourceType === "multi_dimension_table" && selectedTable && (!selectedTable.columns || selectedTable.columns.length === 0) && (
               <div className="rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
-                所选表格 "{selectedTable.name}" 暂无列定义，请先为该表格添加列
+                所选表格「{selectedTable.name}」暂无列定义，请先为该表格添加列
               </div>
             )}
           </div>

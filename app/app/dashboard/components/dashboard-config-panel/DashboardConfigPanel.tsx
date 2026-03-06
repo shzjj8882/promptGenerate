@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutGrid, MessageSquareText, Key, GripVertical, ChevronRight } from "lucide-react";
+import { LayoutGrid, MessageSquareText, Key, GripVertical, ChevronRight } from "@/components/icons";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DRAG_DATA_KEY, type WidgetType } from "../dashboard-widgets/types";

@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronRight, ChevronDown, Save, RotateCcw } from "lucide-react";
+import { ChevronRight, ChevronDown, Save, RotateCcw } from "@/components/icons";
 import { Permission, getMenuTree, updateMenuConfig, getPermissions, MenuItem } from "@/lib/api/rbac";
 import { showSuccessToast } from "@/lib/utils/toast";
 import { useErrorHandler } from "@/hooks/use-error-handler";

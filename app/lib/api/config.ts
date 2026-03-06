@@ -134,6 +134,9 @@ function getResponseMessage(result: ApiResponse, fallback: string): string {
   return msg || fallback;
 }
 
+/** 请求被取消时的错误码（AbortError） */
+export const ABORT_ERROR_CODE = -1;
+
 /**
  * API 错误类
  */
@@ -307,7 +310,7 @@ export async function apiRequest<T>(
     } catch (error) {
       // 如果是取消请求，抛出特殊错误
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new ApiError("请求已取消", -1);
+        throw new ApiError("请求已取消", ABORT_ERROR_CODE);
       }
 
       // 如果是 ApiError，直接抛出

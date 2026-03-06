@@ -78,7 +78,7 @@ export async function convertPrompt(
   scene: string,
   request: PromptConvertRequest
 ): Promise<{ content: string; scene: string; tenant_id: string }> {
-  const url = buildApiUrl(`/api/llmchat/prompts/${scene}/convert`);
+  const url = buildApiUrl(`/admin/llmchat/prompts/${scene}/convert`);
   const token = getAuthToken();
 
   const headers: HeadersInit = {
@@ -119,7 +119,7 @@ export async function streamPromptChat(
   onError?: (error: Error) => void,
   onDone?: () => void
 ): Promise<void> {
-  const url = buildApiUrl(`/api/llmchat/prompts/${scene}/chat`);
+  const url = buildApiUrl(`/admin/llmchat/prompts/${scene}/chat`);
   const token = getAuthToken();
 
   const headers: HeadersInit = {
@@ -203,7 +203,7 @@ export async function apiPrompt(
   scene: string,
   request: PromptApiRequest
 ): Promise<PromptApiRawResponse> {
-  const url = buildApiUrl(`/api/llmchat/prompts/${scene}/api`);
+  const url = buildApiUrl(`/admin/llmchat/prompts/${scene}/api`);
   const token = getAuthToken();
 
   const headers: HeadersInit = {
@@ -241,7 +241,7 @@ export async function getLLMChatTask(taskId: string): Promise<{
   created_at?: string;
   completed_at?: string;
 }> {
-  const url = buildApiUrl(`/api/llmchat/tasks/${taskId}`);
+  const url = buildApiUrl(`/admin/llmchat/tasks/${taskId}`);
   const token = getAuthToken();
 
   const headers: HeadersInit = {

@@ -1,10 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { MessageSquareText } from "lucide-react";
+import { MessageSquareText, MinusCircle } from "@/components/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MinusCircle } from "lucide-react";
 import type { WidgetSize } from "./types";
 
 interface WidgetPromptsProps {

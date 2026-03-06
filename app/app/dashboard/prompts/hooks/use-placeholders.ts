@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { getPlaceholders } from "@/lib/api/prompts";
+import { getPlaceholders, type Placeholder as ApiPlaceholder } from "@/lib/api/prompts";
 import type { Placeholder, PromptScene } from "../prompts-client";
 
 /**
@@ -19,12 +19,11 @@ export function usePlaceholders() {
       const response = await getPlaceholders({ scene });
       // getPlaceholders 返回的是 PaginatedPlaceholdersResponse，需要提取 items
       const placeholdersArray = response.items || (Array.isArray(response) ? response : []);
-      const list: Placeholder[] = placeholdersArray.map((p: any) => ({
+      const list: Placeholder[] = placeholdersArray.map((p: ApiPlaceholder) => ({
         key: p.key,
         label: p.label,
-        scene: p.scene,
+        scene: (p.scene ?? "") as PromptScene,
         description: p.description,
-        id: p.id,
         data_source_type: p.data_source_type,
         data_type: p.data_type,
         table_id: p.table_id,

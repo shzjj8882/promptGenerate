@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { Shield } from "lucide-react";
+import { Shield } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { ActionButtons } from "@/components/shared/action-buttons";

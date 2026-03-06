@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "highlight.js/styles/github.css";
+@import "@icon-park/react/styles/index.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -84,6 +85,11 @@ html {
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* 语义色：用于卡片图标、状态等 */
+  --accent-chat: oklch(0.557 0.222 293.031);
+  --accent-api: oklch(0.546 0.245 262.881);
+  --accent-success: oklch(0.577 0.17 164.364);
+  --accent-warning: oklch(0.769 0.188 70.08);
 }
 
 .dark {
@@ -118,6 +124,11 @@ html {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  /* 语义色：深色模式 */
+  --accent-chat: oklch(0.696 0.17 293.031);
+  --accent-api: oklch(0.696 0.17 262.881);
+  --accent-success: oklch(0.696 0.17 164.364);
+  --accent-warning: oklch(0.769 0.188 70.08);
 }
 
 /* 工作台网格：拖拽占位符 + 拖拽中的瓦片，使用主题色支持亮/暗模式 */

@@ -64,7 +64,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Pencil, Trash2, Shield, Users, UserCog, ArrowDown, ArrowUp, ArrowUpDown, MoreHorizontal, Settings2, UserCheck, Menu } from "lucide-react";
+import { Plus, Pencil, Trash2, Shield, Users, UserCog, ArrowDown, ArrowUp, ArrowUpDown, MoreHorizontal, Settings2, UserCheck, Menu } from "@/components/icons";
 import {
   Permission,
   Role,
@@ -303,9 +303,10 @@ function RBACClientImpl(props: RBACClientProps = {}) {
         accessorKey: "username",
         header: ({ column }) => (
           <Button
+            type="button"
             variant="ghost"
             size="sm"
-            className="-ml-3 h-8 px-2"
+            className="-ml-3 h-8 px-2 select-none"
             onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           >
             用户名
@@ -313,7 +314,7 @@ function RBACClientImpl(props: RBACClientProps = {}) {
           </Button>
         ),
         cell: ({ row }) => (
-          <div className="font-medium">{row.original.username}</div>
+          <div className="font-medium select-none">{row.original.username}</div>
         ),
       },
       {
