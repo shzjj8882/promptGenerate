@@ -2,7 +2,21 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { observer } from "mobx-react-lite";
-import { Column, Line, Pie } from "@ant-design/charts";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  CartesianGrid,
+} from "recharts";
 import { uiStore } from "@/store/ui-store";
 import {
   Select,
@@ -97,25 +111,23 @@ function parseNumber(value: string): number {
   return isNaN(n) ? 0 : n;
 }
 
-/** 将 chartData 转为 AntV 多系列格式：[{ name, type, value }, ...] */
-function toAntVSeriesData(
+/** 将 chartData 转为 Recharts 多系列格式：[{ name, [seriesKey]: value }, ...] */
+function toRechartsSeriesData(
   chartData: Record<string, string | number>[],
   valueColumnKeys: string[],
   table: MultiDimensionTable
-): { name: string; type: string; value: number }[] {
-  const result: { name: string; type: string; value: number }[] = [];
+): Record<string, string | number>[] {
+  const result: Record<string, string | number>[] = [];
   for (const row of chartData) {
     const name = String(row.name ?? "");
+    const entry: Record<string, string | number> = { name };
     for (const key of valueColumnKeys) {
       const col = table.columns.find((c) => c.key === key);
       const type = col?.label ?? key;
       const val = row[type];
-      result.push({
-        name,
-        type,
-        value: typeof val === "number" ? val : parseNumber(String(val ?? 0)),
-      });
+      entry[type] = typeof val === "number" ? val : parseNumber(String(val ?? 0));
     }
+    result.push(entry);
   }
   return result;
 }
@@ -187,9 +199,18 @@ function TableChartViewImpl({
     return Array.from(grouped.values());
   }, [rows, config, table.columns]);
 
-  const antVBarLineData = useMemo(
-    () => toAntVSeriesData(chartData, config.valueColumnKeys, table),
+  const rechartsBarLineData = useMemo(
+    () => toRechartsSeriesData(chartData, config.valueColumnKeys, table),
     [chartData, config.valueColumnKeys, table]
+  );
+
+  const barLineSeriesKeys = useMemo(
+    () =>
+      config.valueColumnKeys.map((key) => {
+        const col = table.columns.find((c) => c.key === key);
+        return col?.label ?? key;
+      }),
+    [config.valueColumnKeys, table.columns]
   );
 
   const pieData = useMemo(() => {
@@ -363,73 +384,102 @@ function TableChartViewImpl({
           </div>
         ) : config.chartType === "pie" ? (
           <div ref={containerRef} className="flex-1 min-h-0 w-full min-w-0 h-full overflow-hidden" style={{ minHeight: compact ? 180 : 250 }}>
-            <Pie
-              key={chartKey}
-              data={pieData}
-              angleField="value"
-              colorField="name"
-              color={pieData.map((d) => d.fill)}
-              radius={compact ? 0.7 : 0.75}
-              innerRadius={compact ? 0.4 : 0.5}
-              label={{
-                position: "outside",
-                content: (datum: { name: string; percent?: number }) =>
-                  `${datum.name} ${((datum.percent ?? 0) * 100).toFixed(0)}%`,
-              }}
-              legend={{
-                position: "bottom",
-                layout: "horizontal",
-              }}
-              tooltip={{
-                title: (d: { name: string }) => d.name,
-                items: [(d: { name: string; value: number }) => ({ name: "数值", value: d.value })],
-              }}
-              padding={[8, 8, 24, 8]}
-              autoFit
-            />
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart key={chartKey} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={compact ? "35%" : "40%"}
+                  outerRadius={compact ? "65%" : "70%"}
+                  paddingAngle={1}
+                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                >
+                  {pieData.map((_, i) => (
+                    <Cell key={i} fill={chartColors[i % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  content={({ active, payload }) =>
+                    active && payload?.[0] ? (
+                      <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
+                        <div className="font-medium">{payload[0].name}</div>
+                        <span className="text-muted-foreground">数值：</span>
+                        <span className="font-medium">{(payload[0].value as number).toLocaleString()}</span>
+                      </div>
+                    ) : null
+                  }
+                />
+                <Legend layout="horizontal" align="center" verticalAlign="bottom" />
+              </PieChart>
+            </ResponsiveContainer>
           </div>
         ) : config.chartType === "line" ? (
           <div ref={containerRef} className="flex-1 min-h-0 w-full min-w-0 h-full overflow-hidden" style={{ minHeight: compact ? 180 : 250 }}>
-            <Line
-              key={chartKey}
-              data={antVBarLineData}
-              xField="name"
-              yField="value"
-              seriesField="type"
-              color={colorPalette}
-              legend={{ position: "top" }}
-              padding={[24, 8, 8, 44]}
-              axis={{
-                x: { title: false },
-                y: { title: false },
-              }}
-              tooltip={{
-                items: [(d: { name: string; type: string; value: number }) => ({ name: d.type, value: d.value })],
-              }}
-              autoFit
-            />
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart key={chartKey} data={rechartsBarLineData} margin={{ top: 8, right: 8, bottom: 8, left: 36 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(v) => v.toLocaleString()} />
+                <Tooltip
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
+                        <div className="font-medium mb-1">{payload[0]?.payload?.name}</div>
+                        {payload.map((p) => (
+                          <div key={p.dataKey} className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">{p.name}:</span>
+                            <span className="font-medium">{(p.value as number).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null
+                  }
+                />
+                <Legend />
+                {barLineSeriesKeys.map((key, i) => (
+                  <Line
+                    key={key}
+                    type="monotone"
+                    dataKey={key}
+                    stroke={colorPalette[i % colorPalette.length]}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         ) : (
           <div ref={containerRef} className="flex-1 min-h-0 w-full min-w-0 h-full overflow-hidden" style={{ minHeight: compact ? 180 : 250 }}>
-            <Column
-              key={chartKey}
-              data={antVBarLineData}
-              xField="name"
-              yField="value"
-              seriesField="type"
-              group
-              color={colorPalette}
-              legend={{ position: "top" }}
-              padding={[24, 8, 8, 44]}
-              axis={{
-                x: { title: false },
-                y: { title: false },
-              }}
-              tooltip={{
-                items: [(d: { name: string; type: string; value: number }) => ({ name: d.type, value: d.value })],
-              }}
-              autoFit
-            />
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart key={chartKey} data={rechartsBarLineData} margin={{ top: 8, right: 8, bottom: 8, left: 36 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(v) => v.toLocaleString()} />
+                <Tooltip
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
+                        <div className="font-medium mb-1">{payload[0]?.payload?.name}</div>
+                        {payload.map((p) => (
+                          <div key={p.dataKey} className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">{p.name}:</span>
+                            <span className="font-medium">{(p.value as number).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null
+                  }
+                />
+                <Legend />
+                {barLineSeriesKeys.map((key, i) => (
+                  <Bar key={key} dataKey={key} fill={colorPalette[i % colorPalette.length]} radius={4} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
       </div>

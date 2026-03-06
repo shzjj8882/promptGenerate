@@ -2,7 +2,18 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { observer } from "mobx-react-lite";
-import { Line, Pie } from "@ant-design/charts";
+import {
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 import { Copy, Check, Key, RotateCcw, MinusCircle, BarChart3, Settings2, LineChartIcon, PieChartIcon, History } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,14 +72,49 @@ const CHART_TYPE_OPTIONS: { value: TeamCodeChartType; label: string }[] = [
   { value: "pie", label: "饼图（按业务）" },
 ];
 
-/** 图表配色（与 globals.css --chart-* 一致） */
-const CHART_COLORS = [
+/** 默认图表配色（浅色，与 globals.css :root --chart-* 一致） */
+const CHART_COLORS_LIGHT = [
   "oklch(0.646 0.222 41.116)",
   "oklch(0.6 0.118 184.704)",
   "oklch(0.398 0.07 227.392)",
   "oklch(0.828 0.189 84.429)",
   "oklch(0.769 0.188 70.08)",
 ];
+/** 深色模式图表配色（与 globals.css .dark --chart-* 一致） */
+const CHART_COLORS_DARK = [
+  "oklch(0.488 0.243 264.376)",
+  "oklch(0.696 0.17 162.48)",
+  "oklch(0.769 0.188 70.08)",
+  "oklch(0.627 0.265 303.9)",
+  "oklch(0.645 0.246 16.439)",
+];
+
+function useChartColors() {
+  const [colors, setColors] = useState<string[]>(CHART_COLORS_LIGHT);
+  useEffect(() => {
+    const readColors = () => {
+      if (typeof document === "undefined") return;
+      const root = document.documentElement;
+      const style = getComputedStyle(root);
+      const resolved = [1, 2, 3, 4, 5].map((i) =>
+        style.getPropertyValue(`--chart-${i}`).trim()
+      );
+      const valid = resolved.every((c) => c.length > 0);
+      if (valid) setColors(resolved);
+      else setColors(root.classList.contains("dark") ? CHART_COLORS_DARK : CHART_COLORS_LIGHT);
+    };
+    readColors();
+    const obs = new MutationObserver(readColors);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+  return colors;
+}
+
+/** 用量为整数，格式化显示（不含小数） */
+function formatUsage(value: number): string {
+  return Math.round(value).toLocaleString();
+}
 
 interface WidgetTeamCodeProps {
   size: WidgetSize;
@@ -135,6 +181,7 @@ function WidgetTeamCodeImpl({
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [chartResizeKey, setChartResizeKey] = useState(0);
+  const chartColors = useChartColors();
 
   /** 容器尺寸变化时强制图表重新绘制（侧边栏收起/展开会改变卡片宽度） */
   useEffect(() => {
@@ -551,28 +598,28 @@ function WidgetTeamCodeImpl({
       <p className="text-xs text-muted-foreground py-4">加载中...</p>
     ) : teamCodeChartType === "line" ? (
       dailyItems.length > 0 ? (
-        <div className="w-full h-full min-h-0 overflow-hidden">
-          <Line
-          key={chartKey}
-          data={dailyItems}
-          xField="date"
-          yField="tokens_used"
-          color={CHART_COLORS[0]}
-          padding={[24, 8, 8, 44]}
-          axis={{
-            x: { title: false },
-            y: { title: false },
-          }}
-          tooltip={{
-            items: [
-              (d: { date: string; tokens_used: number }) => ({
-                name: "Token 用量",
-                value: d.tokens_used.toLocaleString(),
-              }),
-            ],
-          }}
-          autoFit
-        />
+        <div className="w-full h-full min-h-[140px] overflow-hidden">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              key={chartKey}
+              data={dailyItems.map((d) => ({ ...d, tokens_used: Math.round(d.tokens_used ?? 0) }))}
+              margin={{ top: 8, right: 8, bottom: 8, left: 36 }}
+            >
+              <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(v) => formatUsage(v)} allowDecimals={false} />
+              <Tooltip
+                content={({ active, payload }) =>
+                  active && payload?.[0] ? (
+                    <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
+                      <span className="text-muted-foreground">Token 用量：</span>
+                      <span className="font-medium">{formatUsage(payload[0].value as number)}</span>
+                    </div>
+                  ) : null
+                }
+              />
+              <Line type="monotone" dataKey="tokens_used" stroke={chartColors[0]} strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       ) : (
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm border border-dashed rounded-lg">
@@ -580,33 +627,42 @@ function WidgetTeamCodeImpl({
         </div>
       )
     ) : byBusinessItems.length > 0 ? (
-      <div className="w-full h-full min-h-0 overflow-hidden">
-      <Pie
-        key={chartKey}
-        data={byBusinessItems.map((d, i) => ({
-          name: (d.business_name && String(d.business_name) !== "undefined") ? d.business_name : "(未分类)",
-          value: d.tokens_used ?? 0,
-          fill: CHART_COLORS[i % CHART_COLORS.length],
-        }))}
-        angleField="value"
-        colorField="name"
-        color={byBusinessItems.map((_, i) => CHART_COLORS[i % CHART_COLORS.length])}
-        radius={0.7}
-        innerRadius={0.5}
-        statistic={false}
-        label={{
-          position: "inside",
-          content: (datum: { name?: string; percent?: number }) =>
-            `${datum.name ?? "(未分类)"} ${((datum.percent ?? 0) * 100).toFixed(0)}%`,
-        }}
-        legend={{ position: "bottom", layout: "horizontal" }}
-        tooltip={{
-          title: (d: { name: string }) => d.name,
-          items: [(d: { name: string; value: number }) => ({ name: "Token 用量", value: d.value })],
-        }}
-        padding={[8, 8, 24, 8]}
-        autoFit
-      />
+      <div className="w-full h-full min-h-[140px] overflow-hidden">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart key={chartKey} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+            <Pie
+              data={byBusinessItems.map((d, i) => ({
+                name: d.business_name && String(d.business_name) !== "undefined" ? d.business_name : "(未分类)",
+                value: Math.round(d.tokens_used ?? 0),
+                fill: chartColors[i % chartColors.length],
+              }))}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius="40%"
+              outerRadius="70%"
+              paddingAngle={1}
+              label={({ name, percent }) => `${name ?? "(未分类)"} ${((percent ?? 0) * 100).toFixed(0)}%`}
+            >
+              {byBusinessItems.map((_, i) => (
+                <Cell key={i} fill={chartColors[i % chartColors.length]} />
+              ))}
+            </Pie>
+            <Tooltip
+              content={({ active, payload }) =>
+                active && payload?.[0] ? (
+                  <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
+                    <div className="font-medium">{payload[0].name}</div>
+                    <span className="text-muted-foreground">Token 用量：</span>
+                    <span className="font-medium">{formatUsage(payload[0].value as number)}</span>
+                  </div>
+                ) : null
+              }
+            />
+            <Legend layout="horizontal" align="center" verticalAlign="bottom" />
+          </PieChart>
+        </ResponsiveContainer>
       </div>
     ) : (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm border border-dashed rounded-lg">
