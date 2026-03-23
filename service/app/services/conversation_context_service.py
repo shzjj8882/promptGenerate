@@ -8,7 +8,7 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from fastapi import HTTPException, status
+from app.domain.exceptions import ServiceUnavailableError
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -114,20 +114,14 @@ class ConversationContextService:
     async def add_user_message(cls, conversation_id: str, content: str) -> None:
         redis = await cls._get_redis()
         if not redis:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=SERVICE_UNAVAILABLE_MSG,
-            )
+            raise ServiceUnavailableError(SERVICE_UNAVAILABLE_MSG)
         await cls._add_message_redis(conversation_id, "user", content)
 
     @classmethod
     async def add_assistant_message(cls, conversation_id: str, content: str) -> None:
         redis = await cls._get_redis()
         if not redis:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=SERVICE_UNAVAILABLE_MSG,
-            )
+            raise ServiceUnavailableError(SERVICE_UNAVAILABLE_MSG)
         await cls._add_message_redis(conversation_id, "assistant", content)
         logger.debug("添加助手回复到对话上下文 [conversation_id=%s]: %s...", conversation_id, (content[:100] if content else ""))
 
@@ -141,10 +135,7 @@ class ConversationContextService:
     ) -> List[Dict[str, str]]:
         redis = await cls._get_redis()
         if not redis:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=SERVICE_UNAVAILABLE_MSG,
-            )
+            raise ServiceUnavailableError(SERVICE_UNAVAILABLE_MSG)
         history = await cls._get_messages_redis(conversation_id, max_history)
 
         messages = []
@@ -162,10 +153,7 @@ class ConversationContextService:
     async def clear_conversation(cls, conversation_id: str) -> None:
         redis = await cls._get_redis()
         if not redis:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=SERVICE_UNAVAILABLE_MSG,
-            )
+            raise ServiceUnavailableError(SERVICE_UNAVAILABLE_MSG)
         await cls._clear_redis(conversation_id)
         if conversation_id in cls._contexts:
             del cls._contexts[conversation_id]

@@ -18,10 +18,12 @@ from app.services.llmchat_api_executor import (
     stream_llm_chat_request,
     execute_api_prompt_request,
 )
-from app.routers.api.llmchat import (
+from app.services.llmchat_helpers import (
     check_if_tenant_required,
     process_placeholders_in_content,
     LLMConfig,
+)
+from app.routers.api.llmchat import (
     PromptConvertRequest,
     PromptChatRequest,
     PromptApiRequest,

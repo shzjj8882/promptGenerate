@@ -9,19 +9,19 @@ from pydantic import BaseModel, field_validator
 from app.core.database import get_db
 from app.core.api_auth import get_team_code_from_auth
 from app.core.response import ResponseModel
-from app.services.prompt_service import PromptService, TenantService, PlaceholderService, PlaceholderDataSourceService
-from app.services.llm_service import LLMService
-from app.services.mcp_service import MCPService, TRANSPORT_SSE
-from app.services.mcp_llm_integration import chat_with_mcp_tools
 from app.services.team_quota_service import TeamQuotaService
-from app.services.team_usage_log_service import log_team_usage
-from app.services.llmchat_api_executor import POINTS_PER_LLM_CALL
+from app.services.prompt_service import TenantService
+from app.services.llmchat_api_executor import (
+    POINTS_PER_LLM_CALL,
+    resolve_team_code_for_scene,
+    execute_convert_prompt,
+    execute_api_prompt_request,
+    check_llm_quota_before_stream,
+    stream_llm_chat_request,
+)
+from app.services.team_service import TeamService
 from app.core.config import settings
-import re
 import json
-import asyncio
-import inspect
-import traceback
 import logging
 
 logger = logging.getLogger(__name__)
@@ -142,383 +142,15 @@ class PromptConvertResponse(BaseModel):
     tenant_id: str = Body(..., description="租户ID")
 
 
-def check_if_tenant_required(prompt_content: str, placeholders: list) -> bool:
-    """
-    检查提示词是否需要租户信息
-    
-    提示词中可以没有占位符，此时直接返回 False（不需要租户）。
-    
-    Args:
-        prompt_content: 提示词内容
-        placeholders: 占位符配置列表
-    
-    Returns:
-        是否需要租户信息
-    """
-    # 需要租户信息的占位符 key 列表（英文格式）
-    tenant_required_keys = {
-        "conversationId",  # 系统对话ID（需要租户上下文）
-    }
-    
-    # 需要租户信息的中文占位符映射
-    tenant_required_chinese_keys = {
-        "系统对话ID",
-    }
-    
-    # 从提示词内容中提取所有占位符
-    placeholder_pattern = r"\{([^{}]+)\}"
-    placeholder_keys = set(re.findall(placeholder_pattern, prompt_content))
-    
-    # 检查是否有需要租户的占位符
-    for key in placeholder_keys:
-        key_stripped = key.strip()
-        # 检查英文格式的占位符 key
-        if key_stripped in tenant_required_keys:
-            return True
-        
-        # 检查中文格式的占位符 key
-        if key_stripped in tenant_required_chinese_keys:
-            return True
-        
-        # 检查占位符配置中是否有需要租户的方法
-        for placeholder in placeholders:
-            if placeholder.key == key_stripped and placeholder.tenant_param_key:
-                return True
-    
-    return False
-
-
-async def process_placeholders_in_content(
-    db: AsyncSession,
-    prompt_content: str,
-    scene: str,
-    tenant_id: Optional[str],
-    additional_params: Dict[str, Any],
-    team_id: Optional[str] = None,
-    team_code: Optional[str] = None,
-) -> str:
-    """
-    处理提示词内容中的占位符。提示词中可以没有占位符，此时原样返回。
-    
-    支持新格式：
-    - 用户输入类型：{input.key} - 从 additional_params 中获取 input.key 的值
-    - 多维表格类型：{table.key.row_id} - 从多维表格中查询数据
-    
-    也支持旧格式（向后兼容）：
-    - {key} 或 {label} - 从 additional_params 中获取值
-    
-    Args:
-        db: 数据库会话
-        prompt_content: 提示词内容
-        scene: 场景代码
-        tenant_id: 租户ID
-        additional_params: 额外的占位符参数
-        team_id: 团队ID（可选，用于过滤占位符）
-        team_code: 团队代码（可选，用于过滤占位符）
-    
-    Returns:
-        处理后的提示词内容
-    """
-    from app.models.multi_dimension_table import MultiDimensionTable, MultiDimensionTableRow, MultiDimensionTableCell
-    from sqlalchemy import select, and_
-    
-    # 1. 从提示词内容中提取所有占位符
-    placeholder_pattern = r"\{([^{}]+)\}"
-    placeholder_keys = list(set(re.findall(placeholder_pattern, prompt_content)))
-    
-    # 2. 获取该场景下的所有占位符配置（使用 Service 层，按团队过滤）
-    placeholders = await PlaceholderService.get_placeholders_by_scene(
-        db, scene, team_id=team_id, team_code=team_code
-    )
-    
-    # 3. 构建占位符 key 和 label 到配置的映射（支持按 key 或 label 查找）
-    placeholder_map_by_key = {p.key: p for p in placeholders}
-    placeholder_map_by_label = {p.label: p for p in placeholders}
-    
-    # 4. 处理每个占位符
-    processed_content = prompt_content
-    
-    # 收集需要异步处理的占位符任务
-    async_tasks = {}  # {placeholder_key: task}
-    placeholder_values = {}  # {placeholder_key: value}
-    
-    # 第一遍：收集所有需要异步处理的占位符
-    for placeholder_key in placeholder_keys:
-        placeholder_key_stripped = placeholder_key.strip()
-        
-        # 兼容旧格式：{input.key} 或 {table.key.row_id}
-        if placeholder_key_stripped.startswith("input."):
-            # 用户输入类型：{input.key}
-            key = placeholder_key_stripped[6:]  # 去掉 "input."
-            # 从 additional_params 中获取值，键名应该是 input.key
-            value = additional_params.get(f"input.{key}", "")
-            placeholder_values[placeholder_key] = value
-            continue
-        
-        elif placeholder_key_stripped.startswith("table."):
-            # 多维表格类型：{table.key.row_id}
-            parts = placeholder_key_stripped[6:].split(".", 1)  # 去掉 "table."
-            if len(parts) >= 2:
-                key = parts[0]
-                row_id_key = parts[1]  # row_id 参数名，如 "row_id"
-                
-                # 查找占位符配置
-                placeholder_config = placeholder_map_by_key.get(key) or placeholder_map_by_label.get(key)
-                
-                if placeholder_config and placeholder_config.data_source_type == "multi_dimension_table":
-                    # 从 additional_params 中获取行ID
-                    row_id_param_key = f"table.{key}.{row_id_key}"
-                    row_id_value = additional_params.get(row_id_param_key)
-                    
-                    if row_id_value is not None and placeholder_config.table_id and placeholder_config.table_column_key:
-                        # 查询多维表格数据
-                        try:
-                            # 查询行（根据 table_id 和 row_id）
-                            row_query = select(MultiDimensionTableRow).where(
-                                and_(
-                                    MultiDimensionTableRow.table_id == placeholder_config.table_id,
-                                    MultiDimensionTableRow.row_id == int(row_id_value)
-                                )
-                            )
-                            row_result = await db.execute(row_query)
-                            row = row_result.scalar_one_or_none()
-                            
-                            if row:
-                                # 查询单元格值
-                                cell_query = select(MultiDimensionTableCell).where(
-                                    and_(
-                                        MultiDimensionTableCell.row_id == row.id,
-                                        MultiDimensionTableCell.column_key == placeholder_config.table_column_key
-                                    )
-                                )
-                                cell_result = await db.execute(cell_query)
-                                cell = cell_result.scalar_one_or_none()
-                                
-                                if cell:
-                                    placeholder_values[placeholder_key] = cell.value or ""
-                                else:
-                                    placeholder_values[placeholder_key] = ""
-                            else:
-                                placeholder_values[placeholder_key] = ""
-                        except (ValueError, TypeError):
-                            # row_id 不是有效数字
-                            placeholder_values[placeholder_key] = ""
-                    else:
-                        placeholder_values[placeholder_key] = ""
-                else:
-                    # 配置不存在或类型不匹配，尝试从 additional_params 获取
-                    placeholder_values[placeholder_key] = additional_params.get(row_id_param_key, "")
-                continue
-        
-        # 新格式：{key} - 根据占位符配置来决定如何获取值
-        key = placeholder_key_stripped
-        placeholder_config = placeholder_map_by_key.get(key) or placeholder_map_by_label.get(key)
-        
-        if placeholder_config:
-            if placeholder_config.data_source_type == "multi_dimension_table":
-                # 多维表格类型：需要从表格中查询数据
-                # 从 additional_params 中获取条件值
-                # 只支持嵌套对象结构：{key: {condition_field: value}}
-                # 例如：{"name": {"row_id": "1"}} 或 {"name": {"customer_id": "123"}}
-                condition_value = None
-                actual_condition_key = None
-                key_params = additional_params.get(key)
-                
-                if isinstance(key_params, dict):
-                    # 嵌套对象结构：从 {key: {condition_field: value}} 中获取条件字段和值
-                    # 获取第一个有值的字段（优先），如果没有有值的，获取第一个字段
-                    for param_key, param_value in key_params.items():
-                        # 检查值是否有效：非 None 且非空字符串
-                        if param_value is not None:
-                            # 对于数字类型，0 也是有效值
-                            if isinstance(param_value, (int, float)):
-                                actual_condition_key = param_key
-                                condition_value = param_value
-                                break
-                            # 对于字符串类型，检查是否为空
-                            elif isinstance(param_value, str) and param_value.strip() != "":
-                                actual_condition_key = param_key
-                                condition_value = param_value
-                                break
-                    
-                    # 如果没有找到有值的字段，使用第一个字段（即使值为空）
-                    if not actual_condition_key and len(key_params) > 0:
-                        actual_condition_key = list(key_params.keys())[0]
-                        condition_value = key_params[actual_condition_key]
-                else:
-                    # 格式不正确，返回空值
-                    condition_value = None
-                    actual_condition_key = None
-                
-                if condition_value is not None and actual_condition_key and placeholder_config.table_id and placeholder_config.table_column_key:
-                    # 查询多维表格数据
-                    try:
-                        row = None
-                        
-                        # 根据条件字段类型决定查询方式
-                        if actual_condition_key == "row_id":
-                            # 如果条件是 row_id，直接查询行
-                            # 确保 condition_value 转换为整数
-                            try:
-                                row_id_int = int(condition_value) if not isinstance(condition_value, int) else condition_value
-                            except (ValueError, TypeError):
-                                row_id_int = None
-                            
-                            if row_id_int is not None:
-                                row_query = select(MultiDimensionTableRow).where(
-                                    and_(
-                                        MultiDimensionTableRow.table_id == placeholder_config.table_id,
-                                        MultiDimensionTableRow.row_id == row_id_int
-                                    )
-                                )
-                                row_result = await db.execute(row_query)
-                                row = row_result.scalar_one_or_none()
-                            else:
-                                row = None
-                        else:
-                            # 如果条件是其他列（如 customer_id），先通过单元格值找到行
-                            # 1. 查询条件列对应的单元格
-                            condition_cell_query = select(MultiDimensionTableCell).join(
-                                MultiDimensionTableRow,
-                                MultiDimensionTableCell.row_id == MultiDimensionTableRow.id
-                            ).where(
-                                and_(
-                                    MultiDimensionTableRow.table_id == placeholder_config.table_id,
-                                    MultiDimensionTableCell.column_key == actual_condition_key,
-                                    MultiDimensionTableCell.value == str(condition_value)
-                                )
-                            )
-                            condition_cell_result = await db.execute(condition_cell_query)
-                            condition_cell = condition_cell_result.scalar_one_or_none()
-                            
-                            if condition_cell:
-                                # 2. 通过单元格的 row_id 获取完整的行
-                                row_query = select(MultiDimensionTableRow).where(
-                                    MultiDimensionTableRow.id == condition_cell.row_id
-                                )
-                                row_result = await db.execute(row_query)
-                                row = row_result.scalar_one_or_none()
-                        
-                        if row:
-                            # 查询目标单元格值
-                            cell_query = select(MultiDimensionTableCell).where(
-                                and_(
-                                    MultiDimensionTableCell.row_id == row.id,
-                                    MultiDimensionTableCell.column_key == placeholder_config.table_column_key
-                                )
-                            )
-                            cell_result = await db.execute(cell_query)
-                            cell = cell_result.scalar_one_or_none()
-                            
-                            if cell:
-                                placeholder_values[placeholder_key] = cell.value or ""
-                            else:
-                                placeholder_values[placeholder_key] = ""
-                        else:
-                            placeholder_values[placeholder_key] = ""
-                    except (ValueError, TypeError) as e:
-                        # 条件值格式错误
-                        placeholder_values[placeholder_key] = ""
-                    except Exception as e:
-                        # 其他错误
-                        placeholder_values[placeholder_key] = ""
-                else:
-                    placeholder_values[placeholder_key] = ""
-            else:
-                # 用户输入类型：从嵌套对象结构中获取值
-                # 只支持嵌套对象结构：{key: {value: "xxx"}}
-                key_params = additional_params.get(key)
-                if isinstance(key_params, dict):
-                    # 从嵌套对象中获取 value 字段
-                    value = key_params.get("value", "")
-                else:
-                    # 格式不正确，返回空值
-                    value = ""
-                placeholder_values[placeholder_key] = value
-            continue
-        
-        # 旧格式处理（向后兼容）：{key} 或 {label} - 使用 method 配置
-        if placeholder_config and placeholder_config.method:
-            method_func = PlaceholderDataSourceService.get_method(placeholder_config.method)
-            if method_func:
-                # 检查是否需要租户ID
-                if placeholder_config.tenant_param_key and not tenant_id:
-                    # 如果需要租户ID但没有提供，从 additional_params 获取
-                    value = additional_params.get(placeholder_config.key, "")
-                    placeholder_values[placeholder_key] = value
-                else:
-                    # 准备方法参数
-                    method_params = {}
-                    if placeholder_config.method_params:
-                        try:
-                            method_params = json.loads(placeholder_config.method_params)
-                        except json.JSONDecodeError:
-                            method_params = {}
-                    
-                    if placeholder_config.tenant_param_key and tenant_id:
-                        method_params[placeholder_config.tenant_param_key] = tenant_id
-                    
-                    method_params.update(additional_params)
-                    
-                    sig = inspect.signature(method_func)
-                    if 'db' in sig.parameters:
-                        method_params['db'] = db
-                    
-                    # 创建异步任务
-                    if asyncio.iscoroutinefunction(method_func):
-                        async_tasks[placeholder_key] = method_func(**method_params)
-                    else:
-                        # 同步方法使用线程池
-                        loop = asyncio.get_event_loop()
-                        async_tasks[placeholder_key] = loop.run_in_executor(
-                            None,
-                            lambda mf=method_func, mp=method_params: mf(**mp)
-                        )
-                    continue
-        
-        # 不需要异步处理的，从 additional_params 获取
-        if placeholder_config:
-            value = additional_params.get(placeholder_config.key, "")
-        else:
-            value = additional_params.get(placeholder_key_stripped, "")
-        placeholder_values[placeholder_key] = value
-    
-    # 并行执行所有异步任务
-    if async_tasks:
-        task_keys = list(async_tasks.keys())
-        task_coroutines = list(async_tasks.values())
-        results = await asyncio.gather(*task_coroutines, return_exceptions=True)
-        
-        for key, result in zip(task_keys, results):
-            if isinstance(result, Exception):
-                if settings.DEBUG:
-                    traceback.print_exc()
-                # 如果方法执行失败，尝试从 additional_params 获取
-                placeholder_key_stripped = key.strip()
-                placeholder_config = placeholder_map_by_key.get(placeholder_key_stripped) or placeholder_map_by_label.get(placeholder_key_stripped)
-                if placeholder_config:
-                    value = additional_params.get(placeholder_config.key, "")
-                else:
-                    value = additional_params.get(placeholder_key_stripped, "")
-                placeholder_values[key] = value
-            else:
-                placeholder_values[key] = str(result) if result is not None else ""
-    
-    # 替换所有占位符
-    for placeholder_key in placeholder_keys:
-        value = placeholder_values.get(placeholder_key)
-        if value is None:
-            # 如果还没有值，从 additional_params 获取
-            placeholder_key_stripped = placeholder_key.strip()
-            placeholder_config = placeholder_map_by_key.get(placeholder_key_stripped) or placeholder_map_by_label.get(placeholder_key_stripped)
-            if placeholder_config:
-                value = additional_params.get(placeholder_config.key, "")
-            else:
-                value = additional_params.get(placeholder_key_stripped, "")
-        processed_content = processed_content.replace(f"{{{placeholder_key}}}", str(value))
-        processed_content = processed_content.replace(f"{{ {placeholder_key} }}", str(value))
-    
-    return processed_content
+def _api_error_to_http_status(err: str) -> int:
+    """将 executor 返回的错误信息映射为 HTTP 状态码"""
+    if not err:
+        return 400
+    if "未找到" in err or "不存在" in err:
+        return 404
+    if "不属于" in err:
+        return 403
+    return 400
 
 
 @router.get("/llmchat/tasks/{task_id}", summary="查询异步任务状态", tags=["应用接口 > LLM Chat"])
@@ -557,113 +189,31 @@ async def convert_prompt(
 ):
     """
     提示词转换接口（应用接口，无需认证）- 非流式响应
-    
-    根据场景代码获取提示词，并将占位符替换为实际值。
-    返回处理后的提示词内容，不调用LLM。
-    当请求体未传 teamCode 时，可从请求头 X-Team-AuthCode 推导团队。
-    
-    **参数说明：**
-    - `scene`: 场景代码（路径参数）
-    - `tenantCode`: 租户编号（可选，当提示词包含需要租户信息的占位符时必填）
-    - `teamCode`: 团队代码（可选，未传时可由 X-Team-AuthCode 或 Bearer Token 推导）
-    - `additional_params`: 占位符参数（请求体，可选）
-    
-    **获取逻辑：**
-    1. 获取提示词（如果提供了 tenantCode，优先获取租户自定义提示词）
-    2. 如果租户没有自定义提示词，获取默认提示词（优先团队的，其次全局的）
-    3. 检查提示词是否需要租户信息
-    4. 如果需要租户信息但未提供 tenantCode，返回错误
-    5. 处理提示词中的占位符并返回
-    
-    **占位符处理：**
-    - 支持 `{占位符key}` 和 `{ 占位符key }` 格式
-    - 占位符值优先从配置的方法获取，其次从 `additional_params` 获取
+    根据场景代码获取提示词，并将占位符替换为实际值。不调用 LLM。
     """
-    # 1. 获取提示词（优先租户自定义，否则默认）
-    tenant_id = None
-    
-    # team_code 优先级：请求体 teamCode > 场景关联 > X-Team-AuthCode 推导
-    team_code = request.teamCode
-    if not team_code:
-        from app.services.scene_service import SceneService
-        scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
-        if scene_obj and scene_obj.team_code:
-            team_code = scene_obj.team_code
-    if not team_code and team_code_from_auth:
-        team_code = team_code_from_auth
-    
-    if request.tenantCode:
-        tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
-        if not tenant:
-            raise HTTPException(
-                status_code=404,
-                detail=f"未找到租户编号为 {request.tenantCode} 的租户"
-            )
-        tenant_id = tenant.id
-        
-        prompts = await PromptService.get_prompts(
-            db, scene=scene, tenant_id=tenant_id, is_default=False
-        )
-        if prompts:
-            prompt = prompts[0]
-        else:
-            # 如果租户没有自定义提示词，获取默认提示词（优先团队的，其次全局的）
-            prompt = await PromptService.get_default_prompt(db, scene, team_code=team_code)
-    else:
-        # 获取默认提示词（优先团队的，其次全局的）
-        prompt = await PromptService.get_default_prompt(db, scene, team_code=team_code)
-    
-    if not prompt:
-        raise HTTPException(
-            status_code=404,
-            detail=f"场景 {scene} 的提示词不存在"
-        )
-    
-    if settings.DEBUG:
-        logger.debug("[提示词调试] 场景=%s 租户ID=%s 团队代码=%s 原始内容=%s", scene, tenant_id, team_code, (prompt.content or "")[:200])
-    
-    # 2. 获取团队信息（从场景或请求头获取）
+    team_code = await resolve_team_code_for_scene(
+        db, scene, request.teamCode, team_code_from_auth
+    )
     team_id = None
     if team_code:
-        from app.services.team_service import TeamService
         team = await TeamService.get_team_by_code(db, team_code)
         if team:
             team_id = team.id
-    
-    # 3. 获取占位符配置，检查是否需要租户信息（使用 Service 层，按团队过滤）
-    placeholders = await PlaceholderService.get_placeholders_by_scene(
-        db, scene, team_id=team_id, team_code=team_code
-    )
-    
-    tenant_required = check_if_tenant_required(prompt.content, placeholders)
-    if tenant_required and not tenant_id:
-        raise HTTPException(
-            status_code=400,
-            detail="该提示词包含需要租户信息的占位符，请提供 tenantCode"
-        )
-    
-    # 4. 处理占位符
-    processed_content = await process_placeholders_in_content(
-        db=db,
-        prompt_content=prompt.content,
-        scene=scene,
-        tenant_id=tenant_id,
-        additional_params=request.additional_params or {},
-        team_id=team_id,
-        team_code=team_code,
-    )
-    
-    if settings.DEBUG:
-        logger.debug("[提示词调试] 处理后内容=%s 占位符参数=%s", (processed_content or "")[:200], request.additional_params or {})
 
-    # 4. 返回处理后的提示词内容（非流式）
+    request_dict = {
+        "tenantCode": request.tenantCode,
+        "additional_params": request.additional_params or {},
+    }
+    content, out_scene, tenant_id = await execute_convert_prompt(
+        db, scene, request_dict, team_code=team_code, team_id=team_id
+    )
     return ResponseModel.success_response(
         data=PromptConvertResponse(
-            content=processed_content,
-            scene=scene,
-            tenant_id=tenant_id or "default",
+            content=content,
+            scene=out_scene,
+            tenant_id=tenant_id,
         ).model_dump(),
-        message="提示词转换成功"
+        message="提示词转换成功",
     )
 
 
@@ -706,297 +256,42 @@ async def chat_prompt(
     - 每个数据块格式：`data: {json}\n\n`
     - 最后发送：`data: [DONE]\n\n`
     """
-    # 1. 获取提示词（优先租户自定义，否则默认）
-    tenant_id = None
-    
-    # team_code 优先级：请求体 teamCode > 场景关联 > X-Team-AuthCode 推导
-    team_code = request.teamCode
-    if not team_code:
-        from app.services.scene_service import SceneService
-        scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
-        if scene_obj and scene_obj.team_code:
-            team_code = scene_obj.team_code
-    if not team_code and team_code_from_auth:
-        team_code = team_code_from_auth
-    
-    if request.tenantCode:
-        tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
-        if not tenant:
-            raise HTTPException(
-                status_code=404,
-                detail=f"未找到租户编号为 {request.tenantCode} 的租户"
-            )
-        tenant_id = tenant.id
-        
-        prompts = await PromptService.get_prompts(
-            db, scene=scene, tenant_id=tenant_id, is_default=False
-        )
-        if prompts:
-            prompt = prompts[0]
-        else:
-            # 如果租户没有自定义提示词，获取默认提示词（优先团队的，其次全局的）
-            prompt = await PromptService.get_default_prompt(db, scene, team_code=team_code)
-    else:
-        # 获取默认提示词（优先团队的，其次全局的）
-        prompt = await PromptService.get_default_prompt(db, scene, team_code=team_code)
-    
-    if not prompt:
-        raise HTTPException(
-            status_code=404,
-            detail=f"场景 {scene} 的提示词不存在"
-        )
-    
-    if settings.DEBUG:
-        logger.debug("[提示词调试] 场景=%s 租户ID=%s 团队代码=%s 原始内容=%s", scene, tenant_id, team_code, (prompt.content or "")[:200])
-    
-    # 2. 获取团队信息（从场景或请求头获取）
+    if not request.model_id:
+        raise HTTPException(status_code=400, detail="必须指定模型ID（model_id）")
+
+    team_code = await resolve_team_code_for_scene(
+        db, scene, request.teamCode, team_code_from_auth
+    )
     team_id = None
     if team_code:
-        from app.services.team_service import TeamService
         team = await TeamService.get_team_by_code(db, team_code)
         if team:
             team_id = team.id
-    
-    # 3. 获取占位符配置，检查是否需要租户信息（使用 Service 层，按团队过滤）
-    placeholders = await PlaceholderService.get_placeholders_by_scene(
-        db, scene, team_id=team_id, team_code=team_code
-    )
-    
-    tenant_required = check_if_tenant_required(prompt.content, placeholders)
-    if tenant_required and not tenant_id:
-        raise HTTPException(
-            status_code=400,
-            detail="该提示词包含需要租户信息的占位符，请提供 tenantCode"
-        )
-    
-    # 4. 处理占位符
-    processed_content = await process_placeholders_in_content(
-        db=db,
-        prompt_content=prompt.content,
-        scene=scene,
-        tenant_id=tenant_id,
-        additional_params=request.additional_params or {},
-        team_id=team_id,
-        team_code=team_code,
-    )
-    
-    if settings.DEBUG:
-        logger.debug("[提示词调试] 处理后内容=%s 用户消息=%s 占位符参数=%s", (processed_content or "")[:200], (request.user_message or "")[:100], request.additional_params or {})
-    
-    # 4. 获取模型配置（必须提供 model_id，不再支持默认模型）
-    if not request.model_id:
-        raise HTTPException(status_code=400, detail="必须指定模型ID（model_id）")
-    
-    llm_config = request.llm_config or LLMConfig()
-    from app.services.llm_model_service import LLMModelService
-    model = await LLMModelService.get_model_by_id(db, request.model_id)
-    if not model:
-        raise HTTPException(status_code=400, detail="指定的模型不存在")
-    
-    # 验证模型是否属于当前团队（如果提供了team_id）
-    if team_id and model.team_id and model.team_id != team_id:
-        raise HTTPException(status_code=403, detail="模型不属于当前团队")
-    
-    # 创建 LLM 服务（使用数据库配置）
-    import json
-    config_dict = {}
-    if model.extra_config:
-        try:
-            config_dict = json.loads(model.extra_config) if isinstance(model.extra_config, str) else model.extra_config
-        except Exception:
-            pass
-    # 在创建 LLMService 之前，按团队配额预扣本次请求的平台积点数（固定 1 点/次，非 LLM token）
-    await TeamQuotaService.check_and_consume_tokens(
-        db=db,
-        team_id=team_id,
-        requested_tokens=POINTS_PER_LLM_CALL,
+
+    await check_llm_quota_before_stream(
+        db, team_id, request.model_id,
+        {"user_message": request.user_message, "llm_config": request.llm_config.model_dump() if request.llm_config else {}},
     )
 
-    llm_service = LLMService(
-        api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
-        api_base=model.api_base or getattr(settings, "DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
-        model=model.model or getattr(settings, "DEEPSEEK_MODEL", "deepseek-chat")
-    )
-    # 使用模型的默认参数（如果请求中没有指定）
-    if not llm_config.temperature and model.default_temperature:
-        try:
-            llm_config.temperature = float(model.default_temperature)
-        except Exception:
-            pass
-    if not llm_config.max_tokens and model.default_max_tokens:
-        llm_config.max_tokens = model.default_max_tokens
-    
-    # 5. 获取会话历史（如果提供了 conversation_id）
-    conversation_history = []
-    conversation = None
-    if request.conversation_id:
-        from app.services.conversation_service import ConversationService
-        conversation = await ConversationService.get_conversation_by_id(db, request.conversation_id, include_messages=False)
-        if conversation:
-            # 验证会话属于当前团队
-            if team_id and conversation.team_id != team_id:
-                raise HTTPException(status_code=403, detail="会话不属于当前团队")
-            # 获取会话历史（最多10条消息）
-            conversation_history = await ConversationService.get_conversation_history_for_context(
-                db, request.conversation_id, max_messages=10
-            )
-    
-    # 6. 构建消息列表（包含上下文）
-    messages = []
-    
-    # 添加系统提示词
-    messages.append({"role": "system", "content": processed_content})
-    
-    # 添加会话历史（排除 system 消息，因为我们已经添加了最新的系统提示词）
-    for hist_msg in conversation_history:
-        if hist_msg["role"] != "system":
-            messages.append({
-                "role": hist_msg["role"],
-                "content": hist_msg["content"]
-            })
-    
-    # 添加当前用户消息
-    messages.append({"role": "user", "content": request.user_message})
-    
-    # 7. 返回SSE流式响应并保存会话消息
-    async def generate_sse_stream():
-        full_response = ""
-        try:
-            # 若指定了 MCP，使用工具调用循环（非流式内部，最后流式输出结果）
-            if request.mcp_id:
-                mcp = await MCPService.get_by_id_or_name(db, request.mcp_id, team_id=team_id)
-                if not mcp:
-                    yield f"data: {json.dumps({'error': 'MCP 配置不存在'}, ensure_ascii=False)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-                if team_id and mcp.team_id and mcp.team_id != team_id:
-                    yield f"data: {json.dumps({'error': 'MCP 配置不属于当前团队'}, ensure_ascii=False)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-                tools_raw = mcp.tools_cache
-                if isinstance(tools_raw, str):
-                    try:
-                        tools_raw = json.loads(tools_raw) if tools_raw else []
-                    except Exception as e:
-                        import logging
-                        logging.getLogger(__name__).warning("MCP tools_cache 解析失败，mcp_id=%s: %s", mcp.id, e)
-                        tools_raw = []
-                mcp_tools = tools_raw or []
-                if request.mcp_tool_names:
-                    name_set = set(request.mcp_tool_names)
-                    mcp_tools = [t for t in mcp_tools if t.get("name") in name_set]
-                if not mcp_tools:
-                    yield f"data: {json.dumps({'error': '未找到可用的 MCP 工具'}, ensure_ascii=False)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-                auth_info = None
-                if mcp.auth_info:
-                    try:
-                        auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
-                    except Exception as e:
-                        import logging
-                        logging.getLogger(__name__).warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp.id, e)
-                mcp_transport = getattr(mcp, "transport_type", None) or TRANSPORT_SSE
-                full_response = await chat_with_mcp_tools(
-                    llm_service=llm_service,
-                    messages=messages,
-                    mcp_url=mcp.url,
-                    mcp_tools=mcp_tools,
-                    mcp_auth_info=auth_info,
-                    mcp_transport_type=mcp_transport,
-                    temperature=llm_config.temperature or 0.3,
-                    max_tokens=llm_config.max_tokens,
-                )
-                # 将完整回复作为单个 chunk 流式输出
-                if full_response:
-                    yield f"data: {json.dumps({'content': full_response}, ensure_ascii=False)}\n\n"
-            else:
-                async for chunk in llm_service.chat_stream(
-                    messages=messages,
-                    temperature=llm_config.temperature or 0.3,
-                    max_tokens=llm_config.max_tokens,
-                ):
-                    full_response += chunk
-                    # SSE格式：data: {content}\n\n
-                    yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
-            
-            # 保存会话消息（如果提供了 conversation_id）
-            if request.conversation_id and conversation:
-                from app.services.conversation_service import ConversationService
-                from app.schemas.conversation import ConversationMessageCreate
-                # 保存用户消息
-                await ConversationService.add_message(db, request.conversation_id, ConversationMessageCreate(
-                    role="user",
-                    content=request.user_message,
-                    metadata={"model_id": request.model_id} if request.model_id else None
-                ))
-                # 保存助手回复
-                await ConversationService.add_message(db, request.conversation_id, ConversationMessageCreate(
-                    role="assistant",
-                    content=full_response,
-                    metadata={
-                        "model_id": request.model_id or (model.id if model else None),
-                        "model_name": model.model if model else None,
-                        "temperature": llm_config.temperature or 0.3,
-                        "max_tokens": llm_config.max_tokens
-                    }
-                ))
-            elif not conversation and team_id:
-                # 如果没有提供 conversation_id，创建新会话
-                from app.services.conversation_service import ConversationService
-                from app.schemas.conversation import ConversationCreate, ConversationMessageCreate
-                new_conversation = await ConversationService.create_conversation(
-                    db,
-                    ConversationCreate(scene=scene, tenant_id=tenant_id),
-                    team_id=team_id
-                )
-                # 保存用户消息和助手回复
-                await ConversationService.add_message(db, new_conversation.id, ConversationMessageCreate(
-                    role="user",
-                    content=request.user_message,
-                    metadata={"model_id": request.model_id} if request.model_id else None
-                ))
-                await ConversationService.add_message(db, new_conversation.id, ConversationMessageCreate(
-                    role="assistant",
-                    content=full_response,
-                    metadata={
-                        "model_id": request.model_id or (model.id if model else None),
-                        "model_name": model.model if model else None,
-                        "temperature": llm_config.temperature or 0.3,
-                        "max_tokens": llm_config.max_tokens
-                    }
-                ))
-            
-            # 用量统计：5=组合 LLM、接口查询（记录平台积点消耗，非 LLM token）
-            if team_id:
-                await log_team_usage(
-                    db, team_id, usage_type=5,
-                    tokens_used=POINTS_PER_LLM_CALL,
-                    extra_info=json.dumps({"scene": scene, "mode": "prompt_chat"}),
-                    business_name="组合LLM接口",
-                )
-                await db.commit()
-            
-            # 发送结束标记
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            # 记录错误但不暴露详细信息
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.exception("LLM流式调用失败")
-            # 发送通用错误信息
-            error_data = json.dumps({"error": "LLM调用失败，请稍后重试"}, ensure_ascii=False)
-            yield f"data: {error_data}\n\n"
-            yield "data: [DONE]\n\n"
-    
+    request_dict = {
+        "tenantCode": request.tenantCode,
+        "teamCode": request.teamCode or team_code,
+        "additional_params": request.additional_params or {},
+        "user_message": request.user_message,
+        "model_id": request.model_id,
+        "llm_config": request.llm_config.model_dump() if request.llm_config else {},
+        "conversation_id": request.conversation_id,
+        "mcp_id": request.mcp_id,
+        "mcp_tool_names": request.mcp_tool_names,
+    }
     return StreamingResponse(
-        generate_sse_stream(),
+        stream_llm_chat_request(db, scene, request_dict, team_code=team_code, team_id=team_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # 禁用nginx缓冲
-        }
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -1036,72 +331,31 @@ async def api_prompt(
     - 支持 `{占位符key}` 和 `{ 占位符key }` 格式
     - 占位符值优先从配置的方法获取，其次从 `additional_params` 获取
     """
-    # 1. 获取提示词（优先租户自定义，否则默认）
-    tenant_id = None
-    
-    # team_code 优先级：请求体 teamCode > 场景关联 > X-Team-AuthCode 推导
-    team_code = request.teamCode
-    if not team_code:
-        from app.services.scene_service import SceneService
-        scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
-        if scene_obj and scene_obj.team_code:
-            team_code = scene_obj.team_code
-    if not team_code and team_code_from_auth:
-        team_code = team_code_from_auth
-    
-    if request.tenantCode:
-        tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
-        if not tenant:
-            raise HTTPException(
-                status_code=404,
-                detail=f"未找到租户编号为 {request.tenantCode} 的租户"
-            )
-        tenant_id = tenant.id
-        
-        prompts = await PromptService.get_prompts(
-            db, scene=scene, tenant_id=tenant_id, is_default=False
-        )
-        if prompts:
-            prompt = prompts[0]
-        else:
-            # 如果租户没有自定义提示词，获取默认提示词（优先团队的，其次全局的）
-            prompt = await PromptService.get_default_prompt(db, scene, team_code=team_code)
-    else:
-        # 获取默认提示词（优先团队的，其次全局的）
-        prompt = await PromptService.get_default_prompt(db, scene, team_code=team_code)
-    
-    if not prompt:
-        raise HTTPException(
-            status_code=404,
-            detail=f"场景 {scene} 的提示词不存在"
-        )
-    
-    if settings.DEBUG:
-        logger.debug("[提示词调试] 场景=%s 租户ID=%s 团队代码=%s 原始内容=%s", scene, tenant_id, team_code, (prompt.content or "")[:200])
-    
-    # 2. 获取团队信息（从场景或请求头获取）
+    team_code = await resolve_team_code_for_scene(
+        db, scene, request.teamCode, team_code_from_auth
+    )
     team_id = None
     if team_code:
-        from app.services.team_service import TeamService
         team = await TeamService.get_team_by_code(db, team_code)
         if team:
             team_id = team.id
 
-    # 2.5 异步模式：有通知时创建任务、推队列、立即返回 task_id
+    request_dict = {
+        "tenantCode": request.tenantCode,
+        "teamCode": request.teamCode or team_code,
+        "additional_params": request.additional_params or {},
+        "user_message": request.user_message,
+        "model_id": request.model_id,
+        "llm_config": request.llm_config.model_dump() if request.llm_config else {},
+        "conversation_id": request.conversation_id,
+        "mcp_id": request.mcp_id,
+        "mcp_tool_names": request.mcp_tool_names,
+    }
+
+    # 异步模式：有通知时创建任务、推队列、立即返回 task_id
     notif = request.notification
     if notif and notif.type and notif.type != "none":
         from app.services.llmchat_task_service import LLMChatTaskService
-        request_dict = {
-            "tenantCode": request.tenantCode,
-            "teamCode": request.teamCode or team_code,
-            "additional_params": request.additional_params or {},
-            "user_message": request.user_message,
-            "model_id": request.model_id,
-            "llm_config": request.llm_config.model_dump() if request.llm_config else {},
-            "conversation_id": request.conversation_id,
-            "mcp_id": request.mcp_id,
-            "mcp_tool_names": request.mcp_tool_names,
-        }
         if notif.type == "email" and notif.email_to:
             # 预扣积点，失败时 Worker 补偿退还
             if team_id:
@@ -1137,33 +391,10 @@ async def api_prompt(
             )
         if notif.type == "email":
             raise HTTPException(status_code=400, detail="邮件通知需提供 email_to")
-    
-    # 3. 获取占位符配置，检查是否需要租户信息（使用 Service 层，按团队过滤）
-    placeholders = await PlaceholderService.get_placeholders_by_scene(
-        db, scene, team_id=team_id, team_code=team_code
-    )
-    
-    tenant_required = check_if_tenant_required(prompt.content, placeholders)
-    if tenant_required and not tenant_id:
-        raise HTTPException(
-            status_code=400,
-            detail="该提示词包含需要租户信息的占位符，请提供 tenantCode"
-        )
 
-    # 3.5 异步队列模式：无通知时也走队列（减轻 API 压力），除非 sync=true
+    # 异步队列模式：无通知时也走队列（减轻 API 压力），除非 sync=true
     if not sync and getattr(settings, "LLM_API_ASYNC_DEFAULT", True):
         from app.services.llmchat_task_service import LLMChatTaskService
-        request_dict = {
-            "tenantCode": request.tenantCode,
-            "teamCode": request.teamCode or team_code,
-            "additional_params": request.additional_params or {},
-            "user_message": request.user_message,
-            "model_id": request.model_id,
-            "llm_config": request.llm_config.model_dump() if request.llm_config else {},
-            "conversation_id": request.conversation_id,
-            "mcp_id": request.mcp_id,
-            "mcp_tool_names": request.mcp_tool_names,
-        }
         if not request.model_id:
             raise HTTPException(status_code=400, detail="必须指定模型ID（model_id）")
         # 预扣积点，失败时 Worker 补偿退还
@@ -1193,195 +424,28 @@ async def api_prompt(
             data={"task_id": task.id, "status": "pending", "message": "任务已提交，请轮询 GET /api/llmchat/tasks/{task_id} 获取结果"},
             message="异步任务已创建"
         )
-    
-    # 4. 处理占位符
-    processed_content = await process_placeholders_in_content(
-        db=db,
-        prompt_content=prompt.content,
-        scene=scene,
-        tenant_id=tenant_id,
-        additional_params=request.additional_params or {},
-        team_id=team_id,
+
+    # 同步模式：直接调用 executor
+    content, err = await execute_api_prompt_request(
+        db, scene, request_dict,
         team_code=team_code,
+        team_id=team_id,
     )
-    
-    if settings.DEBUG:
-        logger.debug("[提示词调试] 处理后内容=%s 用户消息=%s 占位符参数=%s", (processed_content or "")[:200], (request.user_message or "")[:100], request.additional_params or {})
-    
-    # 4. 获取模型配置（必须提供 model_id，不再支持默认模型）
-    if not request.model_id:
-        raise HTTPException(status_code=400, detail="必须指定模型ID（model_id）")
-    
-    llm_config = request.llm_config or LLMConfig()
-    from app.services.llm_model_service import LLMModelService
-    model = await LLMModelService.get_model_by_id(db, request.model_id)
-    if not model:
-        raise HTTPException(status_code=400, detail="指定的模型不存在")
-    
-    # 验证模型是否属于当前团队（如果提供了team_id）
-    if team_id and model.team_id and model.team_id != team_id:
-        raise HTTPException(status_code=403, detail="模型不属于当前团队")
-    
-    # 创建 LLM 服务（使用数据库配置）
-    import json
-    config_dict = {}
-    if model.extra_config:
-        try:
-            config_dict = json.loads(model.extra_config) if isinstance(model.extra_config, str) else model.extra_config
-        except Exception:
-            pass
-    llm_service = LLMService(
-        api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
-        api_base=model.api_base or getattr(settings, "DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
-        model=model.model or getattr(settings, "DEEPSEEK_MODEL", "deepseek-chat")
-    )
-    # 使用模型的默认参数（如果请求中没有指定）
-    if not llm_config.temperature and model.default_temperature:
-        try:
-            llm_config.temperature = float(model.default_temperature)
-        except Exception:
-            pass
-    if not llm_config.max_tokens and model.default_max_tokens:
-        llm_config.max_tokens = model.default_max_tokens
-    
-    # 5. 获取会话历史（如果提供了 conversation_id）
-    conversation_history = []
-    conversation = None
-    if request.conversation_id:
-        from app.services.conversation_service import ConversationService
-        conversation = await ConversationService.get_conversation_by_id(db, request.conversation_id, include_messages=False)
-        if conversation:
-            # 验证会话属于当前团队
-            if team_id and conversation.team_id != team_id:
-                raise HTTPException(status_code=403, detail="会话不属于当前团队")
-            # 获取会话历史（最多10条消息）
-            conversation_history = await ConversationService.get_conversation_history_for_context(
-                db, request.conversation_id, max_messages=10
-            )
-    
-    # 6. 构建消息列表（包含上下文）
-    messages = []
-    
-    # 添加系统提示词
-    messages.append({"role": "system", "content": processed_content})
-    
-    # 添加会话历史（排除 system 消息，因为我们已经添加了最新的系统提示词）
-    for hist_msg in conversation_history:
-        if hist_msg["role"] != "system":
-            messages.append({
-                "role": hist_msg["role"],
-                "content": hist_msg["content"]
-            })
-    
-    # 添加当前用户消息
-    messages.append({"role": "user", "content": request.user_message})
-    
-    # 7. 调用LLM获取完整回复并保存会话消息
-    try:
-        if request.mcp_id:
-            mcp = await MCPService.get_by_id_or_name(db, request.mcp_id, team_id=team_id)
-            if not mcp:
-                raise HTTPException(status_code=404, detail="MCP 配置不存在")
-            if team_id and mcp.team_id and mcp.team_id != team_id:
-                raise HTTPException(status_code=403, detail="MCP 配置不属于当前团队")
-            tools_raw = mcp.tools_cache
-            if isinstance(tools_raw, str):
-                try:
-                    tools_raw = json.loads(tools_raw) if tools_raw else []
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).warning("MCP tools_cache 解析失败，mcp_id=%s: %s", mcp.id, e)
-                    tools_raw = []
-            mcp_tools = tools_raw or []
-            if request.mcp_tool_names:
-                name_set = set(request.mcp_tool_names)
-                mcp_tools = [t for t in mcp_tools if t.get("name") in name_set]
-            if not mcp_tools:
-                raise HTTPException(status_code=400, detail="未找到可用的 MCP 工具")
-            auth_info = None
-            if mcp.auth_info:
-                try:
-                    auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
-                except Exception:
-                    pass
-            mcp_transport = getattr(mcp, "transport_type", None) or TRANSPORT_SSE
-            response_text = await chat_with_mcp_tools(
-                llm_service=llm_service,
-                messages=messages,
-                mcp_url=mcp.url,
-                mcp_tools=mcp_tools,
-                mcp_auth_info=auth_info,
-                mcp_transport_type=mcp_transport,
-                temperature=llm_config.temperature or 0.3,
-                max_tokens=llm_config.max_tokens,
-            )
-        else:
-            response_text = await llm_service.chat_with_messages(
-                messages=messages,
-                temperature=llm_config.temperature or 0.3,
-                max_tokens=llm_config.max_tokens,
-            )
-        
-        # 保存会话消息（如果提供了 conversation_id）
-        if request.conversation_id and conversation:
-            from app.services.conversation_service import ConversationService
-            from app.schemas.conversation import ConversationMessageCreate
-            # 保存用户消息
-            await ConversationService.add_message(db, request.conversation_id, ConversationMessageCreate(
-                role="user",
-                content=request.user_message,
-                metadata={"model_id": request.model_id} if request.model_id else None
-            ))
-            # 保存助手回复
-            await ConversationService.add_message(db, request.conversation_id, ConversationMessageCreate(
-                role="assistant",
-                content=response_text,
-                metadata={
-                    "model_id": request.model_id or (model.id if model else None),
-                    "model_name": model.model if model else None,
-                    "temperature": llm_config.temperature or 0.3,
-                    "max_tokens": llm_config.max_tokens
-                }
-            ))
-        elif not conversation and team_id:
-            # 如果没有提供 conversation_id，创建新会话
-            from app.services.conversation_service import ConversationService
-            from app.schemas.conversation import ConversationCreate, ConversationMessageCreate
-            new_conversation = await ConversationService.create_conversation(
-                db,
-                ConversationCreate(scene=scene, tenant_id=tenant_id),
-                team_id=team_id
-            )
-            # 保存用户消息和助手回复
-            await ConversationService.add_message(db, new_conversation.id, ConversationMessageCreate(
-                role="user",
-                content=request.user_message,
-                metadata={"model_id": request.model_id} if request.model_id else None
-            ))
-            await ConversationService.add_message(db, new_conversation.id, ConversationMessageCreate(
-                role="assistant",
-                content=response_text,
-                metadata={
-                    "model_id": request.model_id or (model.id if model else None),
-                    "model_name": model.model if model else None,
-                    "temperature": llm_config.temperature or 0.3,
-                    "max_tokens": llm_config.max_tokens
-                }
-            ))
-        
-        return ResponseModel.success_response(
-            data=PromptApiResponse(
-                content=response_text,
-                scene=scene,
-                tenant_id=tenant_id or "default",
-            ).model_dump(),
-            message="接口调用成功"
-        )
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.exception("LLM调用失败")
+    if err:
         raise HTTPException(
-            status_code=500,
-            detail="LLM调用失败，请稍后重试"
+            status_code=_api_error_to_http_status(err),
+            detail=err,
         )
+    tenant_id = "default"
+    if request.tenantCode:
+        tenant = await TenantService.get_tenant_by_code_id(db, request.tenantCode)
+        if tenant:
+            tenant_id = tenant.id
+    return ResponseModel.success_response(
+        data=PromptApiResponse(
+            content=content,
+            scene=scene,
+            tenant_id=tenant_id,
+        ).model_dump(),
+        message="接口调用成功",
+    )

@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional, Tuple, TYPE_CHECKING
 
-from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.exceptions import AccessDeniedError, PlanExpiredError, QuotaExceededError
 from app.models.team import Team
 from app.models.team_token_usage import TeamMonthlyTokenUsage
 from app.models.team_monthly_plan import TeamMonthlyPlan
@@ -49,10 +49,7 @@ class TeamQuotaService:
         result = await db.execute(select(Team).where(Team.id == team_id))
         team: Optional[Team] = result.scalar_one_or_none()
         if not team or not team.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="团队不存在或已禁用",
-            )
+            raise AccessDeniedError("团队不存在或已禁用")
 
         # 1. 校验套餐有效期（如果配置了 plan_expire_at）
         now = datetime.now(timezone.utc)
@@ -62,10 +59,7 @@ class TeamQuotaService:
             if plan_expire.tzinfo is None:
                 plan_expire = plan_expire.replace(tzinfo=timezone.utc)
             if now > plan_expire:
-                raise HTTPException(
-                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                    detail="团队套餐已过期，请联系管理员续费",
-                )
+                raise PlanExpiredError("团队套餐已过期，请联系管理员续费")
 
         year_month = now.strftime("%Y-%m")
         # 2. 读取当月套餐配置与分项
@@ -111,10 +105,7 @@ class TeamQuotaService:
             effective_token_cap = plan_token_limit + (usage.rollover_from_prev_tokens or 0)
             new_tokens_total = (usage.tokens_used or 0) + requested_tokens
             if new_tokens_total > effective_token_cap:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="本月团队积点配额已用完，请联系管理员扩容或续费",
-                )
+                raise QuotaExceededError("本月团队积点配额已用完，请联系管理员扩容或续费")
             # 按优先级扣减并记录：赠送 > 结余 > 套餐 > 追加
             g_used = getattr(usage, "gift_tokens_used", None) or 0
             r_used = getattr(usage, "rollover_tokens_used", None) or 0
@@ -142,10 +133,7 @@ class TeamQuotaService:
         if plan_call_limit and plan_call_limit > 0:
             new_calls_total = (usage.calls_used or 0) + 1
             if new_calls_total > plan_call_limit:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="本月团队调用次数已达上限，请联系管理员扩容或续费",
-                )
+                raise QuotaExceededError("本月团队调用次数已达上限，请联系管理员扩容或续费")
             usage.calls_used = new_calls_total
 
         await db.commit()

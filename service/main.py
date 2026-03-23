@@ -112,6 +112,32 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# 领域异常处理器：将业务异常映射为 HTTP 响应（业务与框架解耦）
+from app.domain.exceptions import (
+    NotFoundError,
+    ValidationError,
+    QuotaExceededError,
+    PlanExpiredError,
+    AccessDeniedError,
+    ServiceUnavailableError,
+    DomainException,
+)
+from app.core.exception_mapper import domain_to_http
+
+
+@app.exception_handler(NotFoundError)
+@app.exception_handler(ValidationError)
+@app.exception_handler(QuotaExceededError)
+@app.exception_handler(PlanExpiredError)
+@app.exception_handler(AccessDeniedError)
+@app.exception_handler(ServiceUnavailableError)
+@app.exception_handler(DomainException)
+async def domain_exception_handler(request: Request, exc: DomainException):
+    """领域异常 → HTTP 响应"""
+    http_exc = domain_to_http(exc)
+    return await http_exception_handler(request, http_exc)
+
+
 # HTTPException 异常处理器
 @app.exception_handler(FastAPIHTTPException)
 async def http_exception_handler(request: Request, exc: FastAPIHTTPException):

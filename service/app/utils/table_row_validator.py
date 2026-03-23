@@ -5,7 +5,7 @@
 """
 from typing import Any, Dict, List, Union
 
-from fastapi import HTTPException, status
+from app.domain.exceptions import ValidationError
 
 
 def _get_column_key(col: Union[Dict[str, Any], Any]) -> str:
@@ -48,7 +48,7 @@ def validate_row_data_for_columns(
         row_data: 单元格数据，key 为列 key，value 为字符串
 
     Raises:
-        HTTPException: 400，包含具体错误信息
+        ValidationError: 数据格式校验失败
     """
     column_keys = [_get_column_key(col) for col in columns]
     column_map = {_get_column_key(col): col for col in columns}
@@ -91,7 +91,4 @@ def validate_row_data_for_columns(
                         )
 
     if validation_errors:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="数据格式验证失败: " + "; ".join(validation_errors),
-        )
+        raise ValidationError("数据格式验证失败: " + "; ".join(validation_errors))

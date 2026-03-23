@@ -2,9 +2,8 @@
 多维表格行数据 API 接口
 通过表格 code 进行行的增删改查操作
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, status
+from fastapi import APIRouter, Depends, Query, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
 from typing import Optional
 
 import json
@@ -17,13 +16,18 @@ from app.schemas.multi_dimension_table import (
     TableRowDeleteByCondition,
     TableRowUpdateByCondition,
 )
-from app.models.multi_dimension_table import (
-    MultiDimensionTable,
-    MultiDimensionTableRow,
-    MultiDimensionTableCell,
-)
 from app.services.team_usage_log_service import log_team_usage
 from app.services.team_quota_service import TeamQuotaService
+from app.services.multi_dimension_table_service import (
+    get_table_by_code_api,
+    api_get_table_rows,
+    api_get_row_ids,
+    api_create_table_row,
+    api_update_row_by_condition,
+    api_delete_row_by_condition,
+    api_update_table_row,
+    api_delete_table_row,
+)
 
 router = APIRouter(dependencies=[Depends(verify_optional_api_key)])
 
@@ -31,48 +35,20 @@ router = APIRouter(dependencies=[Depends(verify_optional_api_key)])
 TABLE_API_TOKENS_PER_CALL = 1
 
 
-async def get_table_by_code(
+async def _resolve_team_id(
     table_code: str,
+    auth_team_id: Optional[str],
+    query_team_id: Optional[str],
     db: AsyncSession,
-    team_id: Optional[str] = None,
-) -> MultiDimensionTable:
-    """通过 code 获取表格（支持按团队过滤）"""
-    query = select(MultiDimensionTable).where(
-        and_(
-            MultiDimensionTable.code == table_code,
-            MultiDimensionTable.is_active == True
-        )
+) -> tuple[Optional[str], str]:
+    """解析 final_team_id，并返回 (final_team_id, table_code)"""
+    final_team_id = auth_team_id or query_team_id
+    table = await get_table_by_code_api(
+        table_code, db, team_id=None if not final_team_id else final_team_id
     )
-    
-    # 如果提供了 team_id，按团队过滤
-    if team_id is not None:
-        query = query.where(MultiDimensionTable.team_id == team_id)
-    
-    result = await db.execute(query)
-    
-    # 如果没有提供 team_id，检查是否有多个结果
-    if team_id is None:
-        tables = result.scalars().all()
-        if len(tables) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"找到多个表格（code: {table_code}），请提供 team_id 参数来指定团队"
-            )
-        elif len(tables) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"表格不存在（code: {table_code}）"
-            )
-        table = tables[0]
-    else:
-        table = result.scalar_one_or_none()
-        if not table:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"表格不存在（code: {table_code}, team_id: {team_id}）"
-            )
-    
-    return table
+    if not final_team_id and table.team_id:
+        final_team_id = table.team_id
+    return final_team_id, table_code
 
 
 @router.get("/multi-dimension-tables/{table_code}/rows", summary="获取表格行列表", tags=["应用接口 > 多维表格"])
@@ -96,93 +72,16 @@ async def get_table_rows(
     curl -X GET "http://localhost:8000/api/multi-dimension-tables/dev/rows?team_id=3da83bd7-2544-455c-918a-d8b4dfe122ee"
     ```
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    
-    # 先获取表格（不强制 team_id 过滤，因为可能表格没有 team_id，或者需要先找到表格再确定 team_id）
-    # 如果 final_team_id 为 None，先不传 team_id，找到表格后再根据表格的 team_id 来设置
-    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    table_id = table.id
-    
-    # 如果 final_team_id 为 None，但表格有 team_id，使用表格的 team_id
-    # 这样可以确保查询时能正确过滤团队（特别是使用 X-Team-AuthCode 时）
-    if not final_team_id and table.team_id:
-        final_team_id = table.team_id
-
-    # 配额校验并扣减：不足时返回 429
+    final_team_id, tc = await _resolve_team_id(table_code, auth_team_id, team_id, db)
     if final_team_id:
         await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
-    
-    # 查询行（使用 final_team_id，支持分页）
+
+    rows_data = await api_get_table_rows(table_code, final_team_id, db, skip=skip, limit=limit)
+
     if final_team_id:
-        query = select(MultiDimensionTableRow).where(
-            and_(
-                MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.team_id == final_team_id,
-            )
-        ).order_by(MultiDimensionTableRow.row_id)
-    else:
-        query = select(MultiDimensionTableRow).where(
-            MultiDimensionTableRow.table_id == table_id
-        ).order_by(MultiDimensionTableRow.row_id)
-    
-    if limit is not None:
-        query = query.offset(skip).limit(limit)
-    
-    result = await db.execute(query)
-    rows = result.scalars().all()
-    
-    if not rows:
-        # 用量统计：4=按条件查询（空结果也计入）
-        if final_team_id:
-            await log_team_usage(db, final_team_id, usage_type=4, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code}), business_name="多维表格-按条件查询")
-            await db.commit()
-        return ResponseModel.success_response(
-            data=[],
-            message="获取行列表成功",
-            code=status.HTTP_200_OK,
-        )
-    
-    # 优化：批量查询所有单元格，避免 N+1 查询问题
-    row_ids = [row.id for row in rows]
-    cells_query = select(MultiDimensionTableCell).where(
-        MultiDimensionTableCell.row_id.in_(row_ids)
-    )
-    cells_result = await db.execute(cells_query)
-    all_cells = cells_result.scalars().all()
-    
-    # 在内存中组织单元格数据（按 row_id 分组）
-    cells_by_row = {}
-    for cell in all_cells:
-        if cell.row_id not in cells_by_row:
-            cells_by_row[cell.row_id] = {}
-        cells_by_row[cell.row_id][cell.column_key] = cell.value
-    
-    # 构建返回数据
-    rows_data = []
-    for row in rows:
-        cells_dict = cells_by_row.get(row.id, {})
-        row_data = json.loads(row.row_data) if row.row_data else None
-        
-        rows_data.append({
-            "id": row.id,
-            "table_id": row.table_id,
-            "row_id": row.row_id,
-            "team_id": row.team_id,
-            "team_code": row.team_code,
-            "row_data": row_data,
-            "cells": cells_dict,
-            "created_by": row.created_by,
-            "updated_by": row.updated_by,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        })
-    
-    # 用量统计：4=按条件查询
-    if final_team_id:
-        await log_team_usage(db, final_team_id, usage_type=4, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code}), business_name="多维表格-按条件查询")
+        await log_team_usage(db, final_team_id, usage_type=4, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": tc}), business_name="多维表格-按条件查询")
         await db.commit()
-    
+
     return ResponseModel.success_response(
         data=rows_data,
         message="获取行列表成功",
@@ -223,56 +122,13 @@ async def get_table_row_ids(
     }
     ```
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    
-    # 获取表格
-    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    if not final_team_id and table.team_id:
-        final_team_id = table.team_id
-
-    # 配额校验并扣减：不足时返回 429
+    final_team_id, _ = await _resolve_team_id(table_code, auth_team_id, team_id, db)
     if final_team_id:
         await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
-    table_id = table.id
-    
-    # 查询已存在的 row_id
-    if final_team_id:
-        row_ids_query = select(MultiDimensionTableRow.row_id).where(
-            and_(
-                MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.team_id == final_team_id,
-            )
-        )
-        max_row_id_query = select(func.max(MultiDimensionTableRow.row_id)).where(
-            and_(
-                MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.team_id == final_team_id,
-            )
-        )
-    else:
-        row_ids_query = select(MultiDimensionTableRow.row_id).where(
-            MultiDimensionTableRow.table_id == table_id
-        )
-        max_row_id_query = select(func.max(MultiDimensionTableRow.row_id)).where(
-            MultiDimensionTableRow.table_id == table_id
-        )
-    
-    # 获取所有已存在的 row_id
-    row_ids_result = await db.execute(row_ids_query)
-    existing_row_ids = sorted(set(row_ids_result.scalars().all()))
-    
-    # 获取最大 row_id
-    max_row_id_result = await db.execute(max_row_id_query)
-    max_val = max_row_id_result.scalar_one()
-    max_row_id = -1 if max_val is None else max_val
-    
+
+    data = await api_get_row_ids(table_code, final_team_id, db)
     return ResponseModel.success_response(
-        data={
-            "max_row_id": max_row_id,  # 当前最大的 row_id（如果没有行则为 -1）
-            "existing_row_ids": existing_row_ids,  # 所有已存在的 row_id 列表（已排序）
-            "next_row_id": max_row_id + 1 if max_row_id >= 0 else 0,  # 建议的下一个 row_id
-        },
+        data=data,
         message="获取 row_id 信息成功",
         code=status.HTTP_200_OK,
     )
@@ -319,139 +175,17 @@ async def create_table_row(
     - 如果不提供 `row_id`，系统会自动生成（使用 max_row_id + 1）
     - 如果提供 `row_id`，必须大于当前最大 row_id，被删除的 row_id 不允许再使用
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=final_team_id)
-    table_id = table.id
-    
-    # 使用从认证信息中获取的 team_id（如果可用）
-    row_team_id = final_team_id
-    if not row_team_id and table.team_id:
-        row_team_id = table.team_id
+    final_team_id, tc = await _resolve_team_id(table_code, auth_team_id, team_id, db)
+    if final_team_id:
+        await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
 
-    # 配额校验并扣减：不足时返回 429
-    if row_team_id:
-        await TeamQuotaService.check_and_consume_tokens(db, row_team_id, TABLE_API_TOKENS_PER_CALL)
-    
-    # 获取当前团队的最大 row_id（用于验证用户提供的 row_id 是否合法）
-    if row_team_id:
-        max_row_id_query = select(func.max(MultiDimensionTableRow.row_id)).where(
-            and_(
-                MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.team_id == row_team_id,
-            )
-        )
-    else:
-        max_row_id_query = select(func.max(MultiDimensionTableRow.row_id)).where(
-            and_(
-                MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.team_id.is_(None),
-            )
-        )
-    max_row_id_result = await db.execute(max_row_id_query)
-    max_val = max_row_id_result.scalar_one()
-    max_row_id = -1 if max_val is None else max_val
-    
-    # 处理用户提供的 row_id
-    if row_data.row_id is not None and row_data.row_id >= 0:
-        new_row_id = row_data.row_id
-        
-        # 检查 row_id 是否已存在
-        existing_row_query = select(MultiDimensionTableRow).where(
-            and_(
-                MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.row_id == new_row_id,
-                MultiDimensionTableRow.team_id == row_team_id if row_team_id else None,
-            )
-        )
-        existing_row_result = await db.execute(existing_row_query)
-        if existing_row_result.scalar_one_or_none():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"行 ID {new_row_id} 已存在")
-        
-        # 检查用户提供的 row_id 是否小于等于 max_row_id
-        # 如果是，说明这个 row_id 可能是被删除的，不允许使用
-        # 例如：当前 max_row_id = 1（row_id 2 被删除了），用户尝试使用 row_id 2，应该拒绝
-        if max_row_id >= 0 and new_row_id <= max_row_id:
-            # 再次检查：如果 row_id 确实不存在于数据库中，说明是被删除的，不允许使用
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail=f"行 ID {new_row_id} 不允许使用（可能已被删除）。请使用大于 {max_row_id} 的 row_id，或不提供 row_id 让系统自动生成（将使用 {max_row_id + 1}）"
-            )
-    else:
-        # 自动生成 row_id：使用 max_row_id + 1，确保被删除的 row_id 不会被复用
-        # 这样可以保证 row_id 是递增的，即使中间有被删除的行
-        # 使用 max_row_id + 1，如果没有行则从 0 开始
-        new_row_id = max_row_id + 1 if max_row_id >= 0 else 0
-    
-    columns = json.loads(table.columns) if table.columns else []
-    column_keys = [col["key"] for col in columns]
-    # 填充默认值：对于没有在请求中提供的列，如果列有默认值，则使用默认值
-    final_cells = dict(row_data.cells)  # 复制请求中的 cells
-    for column in columns:
-        column_key = column.get("key")
-        if column_key and column_key not in final_cells:
-            column_options = column.get("options", {})
-            if isinstance(column_options, dict):
-                default_value = column_options.get("defaultValue")
-                if default_value is not None and str(default_value).strip():
-                    final_cells[column_key] = str(default_value).strip()
-    from app.utils.table_row_validator import validate_row_data_for_columns
+    data = await api_create_table_row(table_code, final_team_id, row_data, db)
+    if final_team_id:
+        await log_team_usage(db, final_team_id, usage_type=1, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": tc}), business_name="多维表格-单条新增")
+        await db.commit()
 
-    validate_row_data_for_columns(columns, final_cells)
-
-    # 创建行
-    new_row = MultiDimensionTableRow(
-        table_id=table_id,
-        row_id=new_row_id,
-        team_id=row_team_id,
-        team_code=None,
-        row_data=json.dumps(row_data.row_data, ensure_ascii=False) if row_data.row_data else None,
-        created_by=None,
-        updated_by=None,
-    )
-    
-    db.add(new_row)
-    await db.flush()
-    
-    # 创建单元格（使用填充了默认值后的 cells）
-    for column_key, value in final_cells.items():
-        if column_key not in column_keys:
-            continue
-        
-        cell = MultiDimensionTableCell(
-            table_id=table_id,
-            row_id=new_row.id,
-            column_key=column_key,
-            value=value,
-            created_by=None,
-            updated_by=None,
-        )
-        db.add(cell)
-    
-    # 用量统计：1=单条新增
-    if row_team_id:
-        await log_team_usage(db, row_team_id, usage_type=1, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code}), business_name="多维表格-单条新增")
-    
-    await db.commit()
-    await db.refresh(new_row)
-
-    # 返回创建的行数据（优化：直接使用 final_cells，避免额外查询）
-    cells_dict = {k: v for k, v in final_cells.items() if k in column_keys}
-    
     return ResponseModel.success_response(
-        data={
-            "id": new_row.id,
-            "table_id": new_row.table_id,
-            "row_id": new_row.row_id,
-            "team_id": new_row.team_id,
-            "team_code": new_row.team_code,
-            "row_data": json.loads(new_row.row_data) if new_row.row_data else None,
-            "cells": cells_dict,
-            "created_by": new_row.created_by,
-            "updated_by": new_row.updated_by,
-            "created_at": new_row.created_at.isoformat() if new_row.created_at else None,
-            "updated_at": new_row.updated_at.isoformat() if new_row.updated_at else None,
-        },
+        data=data,
         message="创建行成功",
         code=status.HTTP_201_CREATED,
     )
@@ -500,166 +234,18 @@ async def update_table_row_by_condition(
       }'
     ```
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    
-    # 获取表格（与查询行列表的逻辑完全一致）
-    # 如果 final_team_id 为 None，先不传 team_id，找到表格后再根据表格的 team_id 来设置
-    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    table_id = table.id
-    
-    # 如果 final_team_id 为 None，但表格有 team_id，使用表格的 team_id
-    # 这样可以确保查询时能正确过滤团队（特别是使用 X-Team-AuthCode 时）
-    if not final_team_id and table.team_id:
-        final_team_id = table.team_id
-
-    # 配额校验并扣减：不足时返回 429
+    final_team_id, tc = await _resolve_team_id(table_code, auth_team_id, team_id, db)
     if final_team_id:
         await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
-    
-    condition = update_request.condition
-    
-    # 根据条件查找行
-    if condition.column_key == "row_id":
-        query_conditions = [
-            MultiDimensionTableRow.table_id == table_id,
-            MultiDimensionTableRow.row_id == int(condition.value),
-        ]
-        # 如果指定了团队ID，添加团队过滤条件
-        # 注意：如果 final_team_id 为 None，不添加团队过滤，查询所有团队的行
-        if final_team_id:
-            query_conditions.append(MultiDimensionTableRow.team_id == final_team_id)
-        # 如果 final_team_id 为 None，不添加团队过滤条件，查询所有团队的行
-        # （包括 team_id 为 None 的行）
-        query = select(MultiDimensionTableRow).where(and_(*query_conditions))
-    else:
-        columns = json.loads(table.columns) if table.columns else []
-        column_keys = [col["key"] for col in columns]
-        if condition.column_key not in column_keys:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"列 '{condition.column_key}' 不存在于表格中"
-            )
-        
-        condition_cell_query_conditions = [
-            MultiDimensionTableRow.table_id == table_id,
-            MultiDimensionTableCell.column_key == condition.column_key,
-            MultiDimensionTableCell.value == str(condition.value)
-        ]
-        # 如果指定了团队ID，添加团队过滤条件
-        if final_team_id:
-            condition_cell_query_conditions.append(MultiDimensionTableRow.team_id == final_team_id)
-        
-        condition_cell_query = select(MultiDimensionTableCell).join(
-            MultiDimensionTableRow,
-            MultiDimensionTableCell.row_id == MultiDimensionTableRow.id
-        ).where(and_(*condition_cell_query_conditions))
-        
-        condition_cell_result = await db.execute(condition_cell_query)
-        condition_cells = condition_cell_result.scalars().all()
-        
-        if not condition_cells:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"未找到满足条件 {condition.column_key}={condition.value} 的行"
-            )
-        
-        row_ids = [cell.row_id for cell in condition_cells]
-        query = select(MultiDimensionTableRow).where(
-            MultiDimensionTableRow.id.in_(row_ids)
-        )
-    
-    result = await db.execute(query)
-    rows = result.scalars().all()
-    
-    if not rows:
-        # 提供更详细的错误信息，帮助调试
-        # 先查询一下实际存在的行，看看是什么情况
-        debug_query = select(MultiDimensionTableRow).where(
-            MultiDimensionTableRow.table_id == table_id
-        )
-        if final_team_id:
-            debug_query = debug_query.where(MultiDimensionTableRow.team_id == final_team_id)
-        debug_result = await db.execute(debug_query)
-        debug_rows = debug_result.scalars().all()
-        
-        if condition.column_key == "row_id":
-            error_detail = f"未找到满足条件的行（table_code={table_code}, row_id={condition.value}"
-            error_detail += f", auth_team_id={auth_team_id}, query_team_id={team_id}, final_team_id={final_team_id}"
-            error_detail += f", table_id={table_id}, table_team_id={table.team_id}"
-            if debug_rows:
-                existing_row_ids = [r.row_id for r in debug_rows[:5]]
-                existing_team_ids = list(set([r.team_id for r in debug_rows[:5]]))
-                error_detail += f", 该表格下存在 {len(debug_rows)} 行，row_ids={existing_row_ids}, team_ids={existing_team_ids}"
-            else:
-                error_detail += f", 该表格下不存在任何行（table_id={table_id}, team_id={final_team_id}）"
-            error_detail += "）。请确认：1) 表格是否存在 2) 行是否存在 3) 团队ID是否匹配"
-        else:
-            error_detail = f"未找到满足条件 {condition.column_key}={condition.value} 的行"
-            error_detail += f"（auth_team_id={auth_team_id}, final_team_id={final_team_id}）"
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=error_detail
-        )
-    
-    columns = json.loads(table.columns) if table.columns else []
-    column_keys = [col["key"] for col in columns]
-    if update_request.cells:
-        from app.utils.table_row_validator import validate_row_data_for_columns
 
-        validate_row_data_for_columns(columns, update_request.cells)
-
-    # 更新所有匹配的行（优化：批量查询单元格，避免 N+1）
-    updated_row_ids_list = [r.id for r in rows]
-    cells_by_row_col: dict = {}
-    if update_request.cells:
-        cells_query = select(MultiDimensionTableCell).where(
-            and_(
-                MultiDimensionTableCell.row_id.in_(updated_row_ids_list),
-                MultiDimensionTableCell.column_key.in_(list(update_request.cells.keys())),
-            )
-        )
-        cells_result = await db.execute(cells_query)
-        for cell in cells_result.scalars().all():
-            key = (cell.row_id, cell.column_key)
-            cells_by_row_col[key] = cell
-
-    updated_count = 0
-    updated_row_ids = []
-    for row in rows:
-        if update_request.row_data is not None:
-            row.row_data = json.dumps(update_request.row_data, ensure_ascii=False)
-
-        if update_request.cells:
-            for column_key, value in update_request.cells.items():
-                if column_key not in column_keys:
-                    continue
-                cell = cells_by_row_col.get((row.id, column_key))
-                if cell:
-                    cell.value = value
-                else:
-                    db.add(MultiDimensionTableCell(
-                        table_id=table_id,
-                        row_id=row.id,
-                        column_key=column_key,
-                        value=value,
-                    ))
-
-        updated_row_ids.append(row.id)
-        updated_count += 1
-
-    # 用量统计：2=按条件编辑
+    data = await api_update_row_by_condition(table_code, final_team_id, update_request, db)
     if final_team_id:
-        await log_team_usage(db, final_team_id, usage_type=2, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code, "updated_count": updated_count}), business_name="多维表格-按条件编辑")
+        await log_team_usage(db, final_team_id, usage_type=2, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": tc, "updated_count": data["updated_count"]}), business_name="多维表格-按条件编辑")
+        await db.commit()
 
-    await db.commit()
-    
     return ResponseModel.success_response(
-        data={
-            "updated_count": updated_count,
-            "updated_row_ids": updated_row_ids,
-        },
-        message=f"成功更新 {updated_count} 行",
+        data=data,
+        message=f"成功更新 {data['updated_count']} 行",
         code=status.HTTP_200_OK,
     )
 
@@ -699,94 +285,18 @@ async def delete_table_row_by_condition(
       }'
     ```
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    table_id = table.id
-    if not final_team_id and table.team_id:
-        final_team_id = table.team_id
-
-    # 配额校验并扣减：不足时返回 429
+    final_team_id, tc = await _resolve_team_id(table_code, auth_team_id, team_id, db)
     if final_team_id:
         await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
-    
-    condition = delete_request.condition
-    
-    # 根据条件查找行
-    if condition.column_key == "row_id":
-        query_conditions = [
-            MultiDimensionTableRow.table_id == table_id,
-            MultiDimensionTableRow.row_id == int(condition.value),
-        ]
-        # 如果指定了团队ID，添加团队过滤条件
-        if final_team_id:
-            query_conditions.append(MultiDimensionTableRow.team_id == final_team_id)
-        query = select(MultiDimensionTableRow).where(and_(*query_conditions))
-    else:
-        columns = json.loads(table.columns) if table.columns else []
-        column_keys = [col["key"] for col in columns]
-        if condition.column_key not in column_keys:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"列 '{condition.column_key}' 不存在于表格中"
-            )
-        
-        condition_cell_query_conditions = [
-            MultiDimensionTableRow.table_id == table_id,
-            MultiDimensionTableCell.column_key == condition.column_key,
-            MultiDimensionTableCell.value == str(condition.value)
-        ]
-        # 如果指定了团队ID，添加团队过滤条件
-        if final_team_id:
-            condition_cell_query_conditions.append(MultiDimensionTableRow.team_id == final_team_id)
-        
-        condition_cell_query = select(MultiDimensionTableCell).join(
-            MultiDimensionTableRow,
-            MultiDimensionTableCell.row_id == MultiDimensionTableRow.id
-        ).where(and_(*condition_cell_query_conditions))
-        
-        condition_cell_result = await db.execute(condition_cell_query)
-        condition_cells = condition_cell_result.scalars().all()
-        
-        if not condition_cells:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"未找到满足条件 {condition.column_key}={condition.value} 的行"
-            )
-        
-        row_ids = [cell.row_id for cell in condition_cells]
-        query = select(MultiDimensionTableRow).where(
-            MultiDimensionTableRow.id.in_(row_ids)
-        )
-    
-    result = await db.execute(query)
-    rows = result.scalars().all()
-    
-    if not rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"未找到满足条件的行"
-        )
-    
-    deleted_count = 0
-    deleted_row_ids = []
-    for row in rows:
-        deleted_row_ids.append(row.id)
-        await db.delete(row)
-        deleted_count += 1
-    
-    # 用量统计：3=按条件删除
+
+    data = await api_delete_row_by_condition(table_code, final_team_id, delete_request, db)
     if final_team_id:
-        await log_team_usage(db, final_team_id, usage_type=3, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": table_code, "deleted_count": deleted_count}), business_name="多维表格-按条件删除")
-    
-    await db.commit()
-    
+        await log_team_usage(db, final_team_id, usage_type=3, tokens_used=TABLE_API_TOKENS_PER_CALL, extra_info=json.dumps({"table_code": tc, "deleted_count": data["deleted_count"]}), business_name="多维表格-按条件删除")
+        await db.commit()
+
     return ResponseModel.success_response(
-        data={
-            "deleted_count": deleted_count,
-            "deleted_row_ids": deleted_row_ids,
-        },
-        message=f"成功删除 {deleted_count} 行",
+        data=data,
+        message=f"成功删除 {data['deleted_count']} 行",
         code=status.HTTP_200_OK,
     )
 
@@ -818,76 +328,13 @@ async def update_table_row(
     
     **注意：** `row_id` 参数是行的数据库主键（UUID），不是逻辑 row_id。如果需要通过逻辑 row_id 更新，请使用 `/rows/by-condition` 接口。
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    table_id = table.id
-    if not final_team_id and table.team_id:
-        final_team_id = table.team_id
-
-    # 配额校验并扣减：不足时返回 429
+    final_team_id, _ = await _resolve_team_id(table_code, auth_team_id, team_id, db)
     if final_team_id:
         await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
-    
-    # 检查行是否存在
-    result = await db.execute(select(MultiDimensionTableRow).where(MultiDimensionTableRow.id == row_id))
-    row = result.scalar_one_or_none()
-    if not row or row.table_id != table_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行不存在")
-    
-    # 更新行数据
-    if row_data.row_data is not None:
-        row.row_data = json.dumps(row_data.row_data, ensure_ascii=False)
-    
-    # 更新单元格（优化：批量查询后更新，避免 N+1）
-    if row_data.cells is not None:
-        columns = json.loads(table.columns) if table.columns else []
-        column_keys = [col["key"] for col in columns]
-        cells_to_update = {k: v for k, v in row_data.cells.items() if k in column_keys}
-        if cells_to_update:
-            cells_query = select(MultiDimensionTableCell).where(
-                and_(
-                    MultiDimensionTableCell.row_id == row_id,
-                    MultiDimensionTableCell.column_key.in_(list(cells_to_update.keys())),
-                )
-            )
-            cells_result = await db.execute(cells_query)
-            cells_map = {c.column_key: c for c in cells_result.scalars().all()}
-            for column_key, value in cells_to_update.items():
-                cell = cells_map.get(column_key)
-                if cell:
-                    cell.value = value
-                else:
-                    db.add(MultiDimensionTableCell(
-                        table_id=table_id,
-                        row_id=row_id,
-                        column_key=column_key,
-                        value=value,
-                    ))
-    
-    await db.commit()
-    await db.refresh(row)
-    
-    # 返回更新后的行数据
-    cells_query = select(MultiDimensionTableCell).where(MultiDimensionTableCell.row_id == row_id)
-    cells_result = await db.execute(cells_query)
-    cells = cells_result.scalars().all()
-    cells_dict = {cell.column_key: cell.value for cell in cells}
-    
+
+    data = await api_update_table_row(table_code, final_team_id, row_id, row_data, db)
     return ResponseModel.success_response(
-        data={
-            "id": row.id,
-            "table_id": row.table_id,
-            "row_id": row.row_id,
-            "team_id": row.team_id,
-            "team_code": row.team_code,
-            "row_data": json.loads(row.row_data) if row.row_data else None,
-            "cells": cells_dict,
-            "created_by": row.created_by,
-            "updated_by": row.updated_by,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        },
+        data=data,
         message="更新行成功",
         code=status.HTTP_200_OK,
     )
@@ -912,29 +359,13 @@ async def delete_table_row(
     
     **注意：** `row_id` 参数是行的数据库主键（UUID），不是逻辑 row_id。如果需要通过逻辑 row_id 删除，请使用 `/rows/by-condition` 接口。
     """
-    # 优先使用认证信息中的 team_id，如果没有则使用查询参数中的 team_id
-    final_team_id = auth_team_id or team_id
-    table = await get_table_by_code(table_code, db, team_id=None if not final_team_id else final_team_id)
-    table_id = table.id
-    if not final_team_id and table.team_id:
-        final_team_id = table.team_id
-
-    # 配额校验并扣减：不足时返回 429
+    final_team_id, _ = await _resolve_team_id(table_code, auth_team_id, team_id, db)
     if final_team_id:
         await TeamQuotaService.check_and_consume_tokens(db, final_team_id, TABLE_API_TOKENS_PER_CALL)
-    
-    # 检查行是否存在
-    result = await db.execute(select(MultiDimensionTableRow).where(MultiDimensionTableRow.id == row_id))
-    row = result.scalar_one_or_none()
-    if not row or row.table_id != table_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="行不存在")
-    
-    # 删除行（级联删除单元格）
-    await db.delete(row)
-    await db.commit()
-    
+
+    data = await api_delete_table_row(table_code, final_team_id, row_id, db)
     return ResponseModel.success_response(
-        data={"id": row_id},
+        data=data,
         message="删除行成功",
         code=status.HTTP_200_OK,
     )

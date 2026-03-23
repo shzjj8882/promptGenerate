@@ -16,6 +16,12 @@ from app.services.mcp_llm_integration import chat_with_mcp_tools
 from app.services.team_quota_service import TeamQuotaService
 from app.services.team_usage_log_service import log_team_usage
 from app.services.team_service import TeamService
+from app.services.llmchat_helpers import (
+    check_if_tenant_required,
+    process_placeholders_in_content,
+    LLMConfig,
+)
+from app.domain.exceptions import NotFoundError, ValidationError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -24,14 +30,87 @@ logger = logging.getLogger(__name__)
 POINTS_PER_LLM_CALL = 1
 
 
-def _get_llmchat_helpers():
-    """延迟导入，避免 Worker 启动时触发 routers 的循环依赖"""
-    from app.routers.api.llmchat import (
-        check_if_tenant_required,
-        process_placeholders_in_content,
-        LLMConfig,
+async def resolve_team_code_for_scene(
+    db: AsyncSession,
+    scene: str,
+    team_code_from_request: Optional[str],
+    team_code_from_auth: Optional[str],
+) -> Optional[str]:
+    """解析 team_code：请求体 > 场景关联 > 鉴权推导"""
+    if team_code_from_request:
+        return team_code_from_request
+    from app.services.scene_service import SceneService
+
+    scene_obj = await SceneService.get_by_code(db, scene, team_id=None)
+    if scene_obj and scene_obj.team_code:
+        return scene_obj.team_code
+    return team_code_from_auth
+
+
+async def execute_convert_prompt(
+    db: AsyncSession,
+    scene: str,
+    request_dict: Dict[str, Any],
+    team_code: Optional[str] = None,
+    team_id: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """
+    执行提示词转换（占位符替换，不调用 LLM）
+
+    Returns:
+        (content, scene, tenant_id)
+    """
+    tenant_id = None
+    if request_dict.get("tenantCode"):
+        tenant = await TenantService.get_tenant_by_code_id(
+            db, request_dict["tenantCode"]
+        )
+        if not tenant:
+            raise NotFoundError(
+                "租户", request_dict.get("tenantCode"), f"未找到租户编号为 {request_dict['tenantCode']} 的租户"
+            )
+        tenant_id = tenant.id
+        prompts = await PromptService.get_prompts(
+            db, scene=scene, tenant_id=tenant_id, is_default=False
+        )
+        prompt = (
+            prompts[0]
+            if prompts
+            else await PromptService.get_default_prompt(
+                db, scene, team_code=team_code
+            )
+        )
+    else:
+        prompt = await PromptService.get_default_prompt(
+            db, scene, team_code=team_code
+        )
+
+    if not prompt:
+        raise NotFoundError("提示词", scene, f"场景 {scene} 的提示词不存在")
+
+    placeholders = await PlaceholderService.get_placeholders_by_scene(
+        db, scene, team_id=team_id, team_code=team_code
     )
-    return check_if_tenant_required, process_placeholders_in_content, LLMConfig
+    tenant_required = check_if_tenant_required(prompt.content, placeholders)
+    if tenant_required and not tenant_id:
+        raise ValidationError(
+            "该提示词包含需要租户信息的占位符，请提供 tenantCode"
+        )
+
+    processed_content = await process_placeholders_in_content(
+        db=db,
+        prompt_content=prompt.content,
+        scene=scene,
+        tenant_id=tenant_id,
+        additional_params=request_dict.get("additional_params") or {},
+        team_id=team_id,
+        team_code=team_code,
+    )
+    return (
+        processed_content,
+        scene,
+        tenant_id or "default",
+    )
 
 
 async def check_llm_quota_before_stream(
@@ -80,7 +159,6 @@ async def execute_api_prompt_request(
         - 成功时 content 有值，error_message 为 None
         - 失败时 content 为 None，error_message 有值
     """
-    check_if_tenant_required, process_placeholders_in_content, LLMConfig = _get_llmchat_helpers()
     # 解析请求
     tenant_id = None
     if request_dict.get("tenantCode"):
@@ -265,7 +343,6 @@ async def stream_llm_chat_request(
     流式执行 LLM 调用，yield SSE 格式的 data 行（不含 "data: " 前缀，由调用方添加）
     与 execute_api_prompt_request 共享前置逻辑
     """
-    check_if_tenant_required, process_placeholders_in_content, LLMConfig = _get_llmchat_helpers()
     tenant_id = None
     if request_dict.get("tenantCode"):
         tenant = await TenantService.get_tenant_by_code_id(db, request_dict["tenantCode"])
@@ -338,6 +415,7 @@ async def stream_llm_chat_request(
 
     user_message = request_dict.get("user_message") or ""
     conversation_history = []
+    conversation = None
     if request_dict.get("conversation_id"):
         from app.services.conversation_service import ConversationService
         conversation = await ConversationService.get_conversation_by_id(
@@ -405,12 +483,72 @@ async def stream_llm_chat_request(
             ):
                 full_response += chunk
                 yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+        # 保存会话消息
+        if full_response:
+            from app.services.conversation_service import ConversationService
+            from app.schemas.conversation import (
+                ConversationCreate,
+                ConversationMessageCreate,
+            )
+            if conversation:
+                await ConversationService.add_message(
+                    db,
+                    request_dict["conversation_id"],
+                    ConversationMessageCreate(
+                        role="user",
+                        content=user_message,
+                        metadata={"model_id": request_dict.get("model_id")},
+                    ),
+                )
+                await ConversationService.add_message(
+                    db,
+                    request_dict["conversation_id"],
+                    ConversationMessageCreate(
+                        role="assistant",
+                        content=full_response,
+                        metadata={
+                            "model_id": request_dict.get("model_id"),
+                            "model_name": model.model if model else None,
+                            "temperature": llm_config.temperature or 0.3,
+                            "max_tokens": llm_config.max_tokens,
+                        },
+                    ),
+                )
+            elif team_id:
+                new_conv = await ConversationService.create_conversation(
+                    db,
+                    ConversationCreate(scene=scene, tenant_id=tenant_id or ""),
+                    team_id=team_id,
+                )
+                await ConversationService.add_message(
+                    db,
+                    new_conv.id,
+                    ConversationMessageCreate(
+                        role="user",
+                        content=user_message,
+                        metadata={"model_id": request_dict.get("model_id")},
+                    ),
+                )
+                await ConversationService.add_message(
+                    db,
+                    new_conv.id,
+                    ConversationMessageCreate(
+                        role="assistant",
+                        content=full_response,
+                        metadata={
+                            "model_id": request_dict.get("model_id"),
+                            "model_name": model.model if model else None,
+                            "temperature": llm_config.temperature or 0.3,
+                            "max_tokens": llm_config.max_tokens,
+                        },
+                    ),
+                )
         # 用量统计：5=组合 LLM、接口查询（记录平台积点消耗，非 LLM token）
         if team_id:
             await log_team_usage(
                 db, team_id, usage_type=5,
                 tokens_used=POINTS_PER_LLM_CALL,
-                extra_info=json.dumps({"scene": scene, "mode": "api_stream"}),
+                extra_info=json.dumps({"scene": scene, "mode": "prompt_chat"}),
                 business_name="组合LLM接口",
             )
             await db.commit()
