@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from app.domain.exceptions import AccessDeniedError, NotFoundError, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -484,22 +484,44 @@ async def _update_table_rows(
                     db.add(cell)
                 await db.flush()
 
+    # 确定行数据的 team_id：团队表用 table.team_id 保证与现有行一致，全局表用 current_user.team_id
+    row_team_id: Optional[str] = table.team_id if table.team_id is not None else team_id
+    max_row_query = select(func.max(MultiDimensionTableRow.row_id)).where(
+        MultiDimensionTableRow.table_id == table_id
+    )
+    if row_team_id is not None:
+        max_row_query = max_row_query.where(MultiDimensionTableRow.team_id == row_team_id)
+    else:
+        max_row_query = max_row_query.where(MultiDimensionTableRow.team_id.is_(None))
+    any_max = await db.execute(max_row_query)
+    next_row_id = (any_max.scalar() or -1) + 1
+
+    # 查询已占用的 row_id，避免与“待更新但被跳过”的行冲突（如跨 team 无权限更新时）
+    occupied_query = select(MultiDimensionTableRow.row_id).where(
+        MultiDimensionTableRow.table_id == table_id
+    )
+    if row_team_id is not None:
+        occupied_query = occupied_query.where(MultiDimensionTableRow.team_id == row_team_id)
+    else:
+        occupied_query = occupied_query.where(MultiDimensionTableRow.team_id.is_(None))
+    occupied_result = await db.execute(occupied_query)
+    _rows = occupied_result.scalars().all() or []
+    occupied_row_ids = set(r if isinstance(r, int) else r[0] for r in _rows)
+
     for row_data in table_data.rows:
         if row_data.id:
             continue
 
-        any_max = await db.execute(
-            select(func.max(MultiDimensionTableRow.row_id)).where(
-                MultiDimensionTableRow.table_id == table_id
-            )
-        )
-        current_max_row_id = any_max.scalar_one() or -1
-        new_row_id = current_max_row_id + 1
+        while next_row_id in occupied_row_ids:
+            next_row_id += 1
+        new_row_id = next_row_id
+        next_row_id += 1
+        occupied_row_ids.add(new_row_id)
 
         new_row = MultiDimensionTableRow(
             table_id=table_id,
             row_id=new_row_id,
-            team_id=team_id,
+            team_id=row_team_id,
             team_code=current_user.team_code if not current_user.is_superuser else None,
             row_data=json.dumps(row_data.row_data, ensure_ascii=False) if row_data.row_data else None,
             created_by=current_user.id,
@@ -521,12 +543,18 @@ async def _update_table_rows(
                 updated_by=current_user.id,
             )
             db.add(cell)
+        await db.flush()
 
-    if team_id:
+    # 最终查询：与 get_table_detail 一致，确保返回与前端拉取相同范围
+    # 非超管按 current_user.team_id 过滤；超管查全部；团队表兼容 team_id=null 的遗留行
+    if team_id is not None:
         all_rows_query = select(MultiDimensionTableRow).where(
             and_(
                 MultiDimensionTableRow.table_id == table_id,
-                MultiDimensionTableRow.team_id == team_id,
+                or_(
+                    MultiDimensionTableRow.team_id == team_id,
+                    MultiDimensionTableRow.team_id.is_(None),
+                ),
             )
         ).order_by(MultiDimensionTableRow.row_id)
     else:

@@ -85,8 +85,8 @@ _redoc_url = "/redoc" if settings.ENV.lower() != "production" else None
 _openapi_url = "/openapi.json" if settings.ENV.lower() != "production" else None
 
 app = FastAPI(
-    title="AILY API",
-    description="AILY 提示词管理服务 - 支持销售打单、调研、PPT报告等业务场景",
+    title="PromptHub API",
+    description="PromptHub 提示词管理服务 - 支持销售打单、调研、PPT报告等业务场景",
     version="1.0.0",
     docs_url=_docs_url,
     redoc_url=_redoc_url,
@@ -186,10 +186,46 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+# 全局异常处理器使用 app logger，确保输出到已配置的 handler
+_app_logger = logging.getLogger("app")
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    """数据库唯一约束等冲突：转为 422 并给出可读提示"""
+    _app_logger.warning("IntegrityError path=%s: %s", getattr(request.url, "path", "-"), exc)
+    err_str = str(getattr(exc, "orig", exc))
+    msg = "表格行序号冲突，请刷新后重试" if "uq_table_team_row" in err_str else "数据冲突"
+    return JSONResponse(
+        content=ResponseModel.error_response(message=msg, code=status.HTTP_422_UNPROCESSABLE_ENTITY).model_dump(exclude_none=True),
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        headers=_cors_headers(request),
+    )
+
+
+def _cors_headers(request: Request) -> dict:
+    origin = request.headers.get("origin")
+    if origin and origin in settings.CORS_ORIGINS:
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"}
+    return {}
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理：仅打日志，不对前端暴露堆栈或异常内容"""
-    logger.exception("未捕获异常")
+    path = getattr(request, "url", None) and request.url.path or "-"
+    method = getattr(request, "method", None) or "-"
+    try:
+        _app_logger.exception(
+            "未捕获异常 path=%s method=%s: %s",
+            path,
+            method,
+            exc,
+        )
+    except Exception as log_err:
+        import sys
+        print(f"[FALLBACK] 未捕获异常 path={path} method={method}: {exc}", file=sys.stderr)
+        print(f"[FALLBACK] 日志记录失败: {log_err}", file=sys.stderr)
     response = ResponseModel.error_response(
         message="服务器内部错误",
         code=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -282,8 +318,7 @@ async def startup_event():
         except Exception as e:
             logger.exception("启动时执行 RBAC / 菜单迁移脚本失败: %s", e)
 
-    # 初始化默认系统管理员账号（如不存在）
-    await initialize_default_admin()
+    # admin 初始化已移至 entrypoint（init_admin_once.py），避免重复输出
 
     # 可选依赖与功能状态日志
     if _default_limits and not _SLOWAPI_AVAILABLE:
@@ -300,15 +335,21 @@ async def startup_event():
         logger.info("prometheus-client 未安装，/metrics 返回占位信息。安装: pip install prometheus-client")
 
 
+def _generate_admin_password() -> str:
+    """生成符合前端登录规则的随机密码：至少 6 位，仅字母+数字，便于输入和复制"""
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(12))
+
+
 async def initialize_default_admin():
     """
-    初始化默认系统管理员账号:
+    初始化默认系统管理员账号（仅在无超级管理员时创建）:
     - 用户名: admin
-    - 密码:   admin
-    - 仅在当前没有任何超级管理员用户时创建
+    - 密码: 由 INITIAL_ADMIN_PASSWORD 指定（需至少 6 位），或自动生成 12 位字母数字随机密码
     """
     async with AsyncSessionLocal() as session:
-        # 统计超级管理员数量（team_code 为空，is_superuser 为 True）
         result = await session.execute(
             select(func.count(User.id)).where(User.is_superuser.is_(True))
         )
@@ -319,8 +360,13 @@ async def initialize_default_admin():
             return
 
         admin_username = "admin"
-        admin_password = "admin"
         admin_email = "admin@example.com"
+
+        # 密码：优先使用环境变量，否则生成 12 位字母数字随机密码（符合前端 min 6 规则）
+        if settings.INITIAL_ADMIN_PASSWORD:
+            admin_password = settings.INITIAL_ADMIN_PASSWORD
+        else:
+            admin_password = _generate_admin_password()
 
         admin_user = User(
             username=admin_username,
@@ -337,9 +383,19 @@ async def initialize_default_admin():
         session.add(admin_user)
         try:
             await session.commit()
-            logger.info("已创建默认系统管理员账号：用户名 'admin'，密码 'admin'")
+            # print 输出到 stdout，docker compose logs 必定可见（仅输出一次）
+            if not getattr(initialize_default_admin, "_printed", False):
+                msg = (
+                    "\n" + "=" * 50 + "\n"
+                    "已创建默认系统管理员账号（请妥善保存）：\n"
+                    "  用户名: admin\n"
+                    f"  密码:   {admin_password}\n"
+                    "=" * 50 + "\n"
+                )
+                print(msg, flush=True)
+                initialize_default_admin._printed = True
+            logger.info("默认 admin 账号已创建，密码见上方输出")
         except IntegrityError:
-            # 并发或重复启动导致的唯一约束冲突时忽略
             await session.rollback()
             logger.warning("创建默认 admin 管理员账号时发生唯一约束冲突，可能已被其他进程创建")
         except Exception:
@@ -361,7 +417,7 @@ async def shutdown_event():
 async def root():
     """根路径"""
     return ResponseModel.success_response(
-        data={"message": "AILY API Service", "version": "1.0.0"},
+        data={"message": "PromptHub API Service", "version": "1.0.0"},
         message="服务运行正常"
     )
 

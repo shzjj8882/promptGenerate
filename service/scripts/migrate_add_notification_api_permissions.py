@@ -43,8 +43,8 @@ async def migrate():
             pid = str(uuid.uuid4())
             await conn.execute(
                 """
-                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'api', $6, NULL, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, is_system_admin_only, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'api', $6, NULL, 0, true, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
                 """,
                 pid, name, code, resource, action, description or "",
@@ -55,8 +55,8 @@ async def migrate():
             pid = str(uuid.uuid4())
             await conn.execute(
                 """
-                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'button', $6, $7, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, is_system_admin_only, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'button', $6, $7, 0, true, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
                 """,
                 pid, name, code, resource, action, description or "", menu_id,

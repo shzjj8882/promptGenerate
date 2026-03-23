@@ -1,17 +1,7 @@
 import { Metadata } from "next";
 import { redirect } from "next/navigation";
-import dynamic from "next/dynamic";
 import { getCurrentUserOnServer } from "@/lib/server-api/auth";
-import { MenusConfigClient } from "./menus-config-client";
-
-const MenusConfigClientDynamic = dynamic(() => import("./menus-config-client").then((mod) => ({ default: mod.MenusConfigClient })), {
-  loading: () => (
-    <div className="flex h-full items-center justify-center">
-      <div className="text-center text-muted-foreground">加载中...</div>
-    </div>
-  ),
-  ssr: false,
-});
+import { MenusConfigDynamic } from "./menus-config-dynamic";
 
 export const metadata: Metadata = {
   title: "菜单配置 - PromptHub",
@@ -24,5 +14,5 @@ export default async function MenusConfigPage() {
     redirect("/403");
   }
 
-  return <MenusConfigClientDynamic />;
+  return <MenusConfigDynamic />;
 }

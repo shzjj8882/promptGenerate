@@ -9,7 +9,7 @@ _DEFAULT_SECRET_KEY = "your-secret-key-here-change-in-production"
 
 class Settings(BaseSettings):
     # 应用配置
-    APP_NAME: str = "AILY API"
+    APP_NAME: str = "PromptHub API"
     DEBUG: bool = False
     # 环境：仅当 ENV=production 时强制校验 SECRET_KEY 不可为默认值；未设置或 development 时允许默认值便于本地开发
     ENV: str = Field(default="development", description="development | production")
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "aily_db"
+    POSTGRES_DB: str = "prompthub_db"
     
     # Redis 配置
     REDIS_HOST: str = "localhost"
@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     
     # 应用接口 /api 可选鉴权：设置后请求头需带 X-API-Key: <API_KEY>，不设置则 /api 无需鉴权
     API_KEY: str = Field(default="", description="可选，设置后 /api 接口需在请求头携带 X-API-Key")
+
+    # 首次初始化 admin 账号：若设置则使用此密码，否则自动生成随机密码并打印到日志
+    INITIAL_ADMIN_PASSWORD: str = Field(default="", description="可选，首次创建 admin 时的密码；不设置则自动生成并打印")
     
     # 日志：LOG_JSON_FORMAT=true 时输出 JSON 格式（便于生产环境采集）
     LOG_JSON_FORMAT: bool = Field(default=False, description="日志 JSON 格式")
@@ -78,6 +81,14 @@ class Settings(BaseSettings):
         """将逗号分隔的字符串转换为列表"""
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
+
+    @field_validator("INITIAL_ADMIN_PASSWORD")
+    @classmethod
+    def validate_initial_admin_password(cls, v: str) -> str:
+        """若设置了 INITIAL_ADMIN_PASSWORD，须至少 6 位（与前端登录规则一致）"""
+        if v and len(v) < 6:
+            raise ValueError("INITIAL_ADMIN_PASSWORD 至少需要 6 个字符（与前端登录规则一致）")
         return v
 
     @model_validator(mode="after")

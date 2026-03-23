@@ -1,1 +1,1 @@
-# AILY API Application Package
+# PromptHub API Application Package

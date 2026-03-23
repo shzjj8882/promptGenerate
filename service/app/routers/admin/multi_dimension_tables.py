@@ -3,7 +3,10 @@
 多维表格管理相关路由
 统一路径：/{table_ref} 支持 UUID 或 code
 """
+import logging
 from fastapi import APIRouter, Depends, Path, Query, status
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, List, Optional
 
@@ -143,12 +146,26 @@ async def update_table(
     db: AsyncSession = Depends(get_db),
 ):
     """更新多维表格（table_ref 支持 UUID 或 code）"""
-    data = await svc.update_table(table_ref, table_data, current_user, db)
-    return ResponseModel.success_response(
-        data=data,
-        message="更新表格成功",
-        code=status.HTTP_200_OK,
+    logger.info(
+        "update_table START table_ref=%s rows_count=%s",
+        table_ref,
+        len(table_data.rows) if table_data.rows else 0,
     )
+    try:
+        data = await svc.update_table(table_ref, table_data, current_user, db)
+        return ResponseModel.success_response(
+            data=data,
+            message="更新表格成功",
+            code=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        logger.exception(
+            "multi_dimension_tables PUT 失败 table_ref=%s rows_count=%s: %s",
+            table_ref,
+            len(table_data.rows) if table_data.rows else 0,
+            e,
+        )
+        raise
 
 
 @router.delete("/multi-dimension-tables/{table_ref}", summary="删除多维表格")

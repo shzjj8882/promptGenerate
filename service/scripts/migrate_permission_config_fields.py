@@ -63,6 +63,16 @@ async def migrate():
             else:
                 print(f"⏭️  permissions.{col} 已存在，跳过")
 
+        # 确保 is_system_admin_only 有 DEFAULT，后续迁移 INSERT 未指定时才能成功（Alembic 创建的列可能无默认值）
+        has_isa = await conn.fetchval("""
+            SELECT 1 FROM information_schema.columns WHERE table_name = 'permissions' AND column_name = 'is_system_admin_only'
+        """)
+        if has_isa:
+            await conn.execute("""
+                ALTER TABLE permissions ALTER COLUMN is_system_admin_only SET DEFAULT false
+            """)
+            print("✅ 已设置 is_system_admin_only 默认值")
+
         # 2. 更新现有记录：按钮权限 type=button
         button_actions = ("menu_create", "menu_update", "menu_delete", "menu_role_create", "menu_role_update", "menu_role_delete", "menu_user_role_assign")
         await conn.execute("""

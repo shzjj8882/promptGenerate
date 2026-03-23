@@ -61,11 +61,21 @@ async def migrate():
             print("⏭️ permissions.type 已存在，跳过")
 
         # 2. 插入菜单权限（code 唯一，已存在则忽略）
+        # 若表有 is_system_admin_only 列需显式指定，否则 NOT NULL 无默认时会报错
+        cols = "id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at"
+        vals = "$1, $2, $3, $4, $5, 'menu', $6, NULL, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+        has_col = await conn.fetchval("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'permissions' AND column_name = 'is_system_admin_only'
+        """)
+        if has_col:
+            cols += ", is_system_admin_only"
+            vals += ", false"
         for code, name, resource, action, description in MENU_PERMISSIONS:
             pid = str(uuid.uuid4())
-            await conn.execute("""
-                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'menu', $6, NULL, 0, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            await conn.execute(f"""
+                INSERT INTO permissions ({cols})
+                VALUES ({vals})
                 ON CONFLICT (code) DO NOTHING
             """, pid, name, code, resource, action, description or "")
         print(f"✅ 菜单权限种子已写入（路由 {len(MENU_ROUTE_PERMISSIONS)} 条 + 按钮 {len(MENU_BUTTON_PERMISSIONS)} 条，若 code 已存在则跳过）")

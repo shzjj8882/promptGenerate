@@ -309,14 +309,19 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
       // 保留已存在行的 row_id，只对新行自动生成 row_id
       const rowsToSave: TableRowBulkData[] = filterNonDeletedRows(localRows)
         .map(row => {
+          // 确保 cells 值均为字符串，兼容 Excel 导入/数字列等可能传入 number 的情况
+          const cells: Record<string, string> = {};
+          for (const [k, v] of Object.entries(row.cells ?? {})) {
+            cells[k] = v == null ? "" : String(v);
+          }
           const rowData: TableRowBulkData = {
-            cells: row.cells,
+            cells,
           };
-          
+
           if (row.row_data) {
             rowData.row_data = row.row_data;
           }
-          
+
           // 如果是已存在的行（不是临时行），保留其 row_id
           // 临时行（id 以 temp- 开头）不提供 row_id，让后端自动生成
           if (!row.id.startsWith("temp-") && row.row_id >= 0) {
@@ -324,7 +329,7 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
             rowData.id = row.id; // 提供 id 用于更新
           }
           // 临时行不提供 row_id 和 id，让后端自动生成
-          
+
           return rowData;
         });
       
@@ -335,8 +340,17 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
         deleted_row_ids: [], // 全量保存不需要单独删除，后端会删除所有旧行
       });
       
-      // 从响应中获取保存后的行数据
-      const savedRows = updatedTable.rows || [];
+      // 从响应中获取保存后的行数据；若为空则重新拉取（兜底：后端有时不返回 rows）
+      let savedRows: TableRowType[] = updatedTable.rows || [];
+      if (savedRows.length === 0 && filterNonDeletedRows(localRows).length > 0) {
+        try {
+          const refetched = await getTable(table.id, true);
+          savedRows = refetched.rows || [];
+        } catch (_) {
+          // 若拉取失败，保留本地编辑结果，避免清空展示
+          savedRows = filterNonDeletedRows(localRows);
+        }
+      }
       
       // 更新本地状态（包括 table 对象和行数据）
       setTable({

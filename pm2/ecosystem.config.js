@@ -48,7 +48,7 @@ const serviceEnv = loadEnvFile(path.join(__dirname, '../service/.env'));
 module.exports = {
   apps: [
     {
-      name: 'aily-service',
+      name: 'prompthub-service',
       script: './start-pm2.sh',
       cwd: '../service',
       interpreter: 'bash',
@@ -59,7 +59,7 @@ module.exports = {
         // 从 service/.env 文件加载的环境变量
         // Python 应用会优先使用环境变量，然后才读取 .env 文件
         DEBUG: serviceEnv.DEBUG || 'False',
-        APP_NAME: serviceEnv.APP_NAME || 'AILY API',
+        APP_NAME: serviceEnv.APP_NAME || 'PromptHub API',
         // 如果未设置 ENV，使用 development（允许使用默认 SECRET_KEY）
         ENV: serviceEnv.ENV || 'development',
         // PostgreSQL 配置
@@ -67,7 +67,7 @@ module.exports = {
         POSTGRES_PORT: serviceEnv.POSTGRES_PORT || '5432',
         POSTGRES_USER: serviceEnv.POSTGRES_USER || 'postgres',
         POSTGRES_PASSWORD: serviceEnv.POSTGRES_PASSWORD || 'postgres',
-        POSTGRES_DB: serviceEnv.POSTGRES_DB || 'aily_db',
+        POSTGRES_DB: serviceEnv.POSTGRES_DB || 'prompthub_db',
         // Redis 配置
         REDIS_HOST: serviceEnv.REDIS_HOST || 'localhost',
         REDIS_PORT: serviceEnv.REDIS_PORT || '6379',
@@ -101,7 +101,7 @@ module.exports = {
       restart_delay: 4000,
     },
     {
-      name: 'aily-llmchat-worker',
+      name: 'prompthub-llmchat-worker',
       script: './start-worker-pm2.sh',
       cwd: '../service',
       interpreter: 'bash',
@@ -112,7 +112,7 @@ module.exports = {
         POSTGRES_PORT: serviceEnv.POSTGRES_PORT || '5432',
         POSTGRES_USER: serviceEnv.POSTGRES_USER || 'postgres',
         POSTGRES_PASSWORD: serviceEnv.POSTGRES_PASSWORD || 'postgres',
-        POSTGRES_DB: serviceEnv.POSTGRES_DB || 'aily_db',
+        POSTGRES_DB: serviceEnv.POSTGRES_DB || 'prompthub_db',
         REDIS_HOST: serviceEnv.REDIS_HOST || 'localhost',
         REDIS_PORT: serviceEnv.REDIS_PORT || '6379',
         REDIS_PASSWORD: serviceEnv.REDIS_PASSWORD || '',
@@ -130,7 +130,7 @@ module.exports = {
       max_memory_restart: '300M',
     },
     {
-      name: 'aily-app',
+      name: 'prompthub-app',
       script: 'node',
       args: 'server.js',
       cwd: '../app/.next/standalone',

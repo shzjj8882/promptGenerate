@@ -44,8 +44,8 @@ async def migrate():
             pid = str(uuid.uuid4())
             sort_order = idx + 1
             result = await conn.execute("""
-                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'menu', $6, $7, $8, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, is_system_admin_only, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'menu', $6, $7, $8, true, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (code) DO NOTHING
             """, pid, name, code, resource, action, description or "", parent_menu_id, sort_order)
             if result == "INSERT 0 1":

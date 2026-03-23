@@ -1,17 +1,16 @@
-# AILY 项目 Docker Compose 配置
-# 包含：PostgreSQL、Redis、后端服务、前端应用、Nginx 反向代理
-# 使用 Nginx 作为统一入口，支持 SSE 流式传输
-# 使用方式: docker-compose up -d
+# PromptHub Docker Compose 配置
+# 包含：PostgreSQL、Redis、后端服务（启动时自动 init+migrate）、前端应用、Nginx、LLMChat Worker
+# 一键构建启动: cd docker && docker compose build && docker compose up -d
 
 services:
   # PostgreSQL 数据库
   postgres:
     image: postgres:15-alpine
-    container_name: aily_postgres
+    container_name: prompthub_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-aily_db}
+      POSTGRES_DB: ${POSTGRES_DB:-prompthub_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -22,12 +21,12 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - aily_network
+      - prompthub_network
 
   # Redis 缓存
   redis:
     image: redis:7-alpine
-    container_name: aily_redis
+    container_name: prompthub_redis
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -39,16 +38,16 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - aily_network
+      - prompthub_network
 
-  # 后端服务（不暴露端口，通过 Nginx 代理访问）
+  # 后端服务（启动时自动执行 init_db + alembic 迁移，再启动 uvicorn）
   service:
     build:
       context: ..
       dockerfile: docker/service/Dockerfile
-    container_name: aily_service
+    container_name: prompthub_service
     environment:
-      # 应用配置
+      # 应用配置（ENV=development 允许默认 SECRET_KEY，便于快速启动；生产请设 ENV=production 并配置强 SECRET_KEY）
       DEBUG: ${DEBUG:-False}
       ENV: ${ENV:-development}
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-here-change-in-production}
@@ -60,7 +59,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-aily_db}
+      POSTGRES_DB: ${POSTGRES_DB:-prompthub_db}
       
       # Redis 配置（使用服务名）
       REDIS_HOST: redis
@@ -78,6 +77,9 @@ services:
       
       # API Key（可选）
       API_KEY: ${API_KEY:-}
+      
+      # 首次创建 admin 时必须设置（≥6 位），已存在 admin 则不输出
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +94,7 @@ services:
     volumes:
       - ../.cursor:/app/.cursor
     networks:
-      - aily_network
+      - prompthub_network
     restart: unless-stopped
 
   # LLMChat 异步任务 Worker（消费 Redis Stream，执行任务并发邮件）
@@ -100,7 +102,8 @@ services:
     build:
       context: ..
       dockerfile: docker/service/Dockerfile
-    container_name: aily_llmchat_worker
+    container_name: prompthub_llmchat_worker
+    entrypoint: []
     command: ["python3", "scripts/llmchat_worker.py"]
     working_dir: /app
     environment:
@@ -108,7 +111,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-aily_db}
+      POSTGRES_DB: ${POSTGRES_DB:-prompthub_db}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -124,7 +127,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - aily_network
+      - prompthub_network
     restart: unless-stopped
 
   # 前端应用（不暴露端口，通过 Nginx 代理访问）
@@ -137,15 +140,17 @@ services:
         DEPLOYMENT_MODE: docker-nginx
         # Docker Nginx 模式：不使用 rewrites，通过 Nginx 代理
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
-    container_name: aily_app
+    container_name: prompthub_app
     environment:
       NODE_ENV: production
       # 部署模式：docker-nginx 表示使用 Nginx 代理，不使用 Next.js rewrites
       DEPLOYMENT_MODE: docker-nginx
+      # 服务端 SSR fetch 需连接后端：Docker 内使用 service 服务名
+      BACKEND_URL: http://service:8000
     depends_on:
       - service
     networks:
-      - aily_network
+      - prompthub_network
     restart: unless-stopped
 
   # Nginx 反向代理（统一入口，支持 SSE 流式传输）
@@ -153,14 +158,14 @@ services:
     build:
       context: .
       dockerfile: nginx/Dockerfile
-    container_name: aily_nginx
+    container_name: prompthub_nginx
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
       - app
       - service
     networks:
-      - aily_network
+      - prompthub_network
     restart: unless-stopped
 
 volumes:
@@ -170,5 +175,5 @@ volumes:
     driver: local
 
 networks:
-  aily_network:
+  prompthub_network:
     driver: bridge

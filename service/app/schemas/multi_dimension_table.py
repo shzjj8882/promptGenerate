@@ -2,7 +2,7 @@
 """
 多维表格相关的 Pydantic schemas
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -34,6 +34,14 @@ class TableRowBulkData(BaseModel):
     row_id: Optional[int] = Field(None, description="行 ID（可选，如果不提供则自动生成）")
     row_data: Optional[Dict[str, Any]] = Field(None, description="行级数据（额外信息）")
     cells: Dict[str, str] = Field(default_factory=dict, description="单元格数据")
+
+    @field_validator("cells", mode="before")
+    @classmethod
+    def coerce_cells_to_strings(cls, v: Any) -> Dict[str, str]:
+        """将 cells 中的值统一转为字符串，兼容前端可能传入的 number 等类型"""
+        if not isinstance(v, dict):
+            return {}
+        return {k: "" if val is None else str(val) for k, val in v.items()}
 
 
 class MultiDimensionTableUpdate(BaseModel):

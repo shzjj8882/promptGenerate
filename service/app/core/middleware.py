@@ -49,6 +49,12 @@ class RequestIDAndAuditMiddleware(BaseHTTPMiddleware):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
         token = request_id_ctx.set(request_id)
+        logger.info(
+            "request_start request_id=%s method=%s path=%s",
+            request_id,
+            request.method,
+            request.url.path,
+        )
         try:
             start_time = time.perf_counter()
             response = await call_next(request)

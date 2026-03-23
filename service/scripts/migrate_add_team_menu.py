@@ -41,12 +41,17 @@ async def migrate():
             """, code)
             
             if existing:
+                # 确保已存在的团队管理菜单 is_system_admin_only=TRUE（历史迁移可能未设置）
+                await conn.execute("""
+                    UPDATE permissions SET is_system_admin_only = TRUE WHERE code = $1 AND (is_system_admin_only IS NULL OR is_system_admin_only = FALSE)
+                """, code)
                 print(f"⏭️  菜单权限已存在，跳过: {name} ({code})")
             else:
                 pid = str(uuid.uuid4())
+                # is_system_admin_only 必须为 TRUE，否则 superuser 的 get_menu_tree 不会返回此菜单
                 await conn.execute("""
-                    INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, created_at, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, 'menu', $6, NULL, $7, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    INSERT INTO permissions (id, name, code, resource, action, type, description, parent_id, sort_order, is_active, is_system_admin_only, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, 'menu', $6, NULL, $7, true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """, pid, name, code, resource, action, description or "", sort_order)
                 inserted += 1
                 print(f"✅ 创建菜单权限: {name} ({code})")

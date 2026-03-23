@@ -74,7 +74,7 @@ exec-nginx: ## 进入 Nginx 容器
 	docker-compose exec nginx sh
 
 exec-db: ## 进入数据库容器
-	docker-compose exec postgres psql -U postgres -d aily_db
+	docker-compose exec postgres psql -U postgres -d prompthub_db
 
 init-db: ## 初始化数据库
 	docker-compose exec service python3 scripts/init_db.py
@@ -111,9 +111,9 @@ clean-all: ## 清理所有未使用的资源（包括数据卷）
 	docker system prune -a -f --volumes
 
 backup-db: ## 备份数据库
-	docker-compose exec postgres pg_dump -U postgres aily_db > backup_$$(date +%Y%m%d_%H%M%S).sql
+	docker-compose exec postgres pg_dump -U postgres prompthub_db > backup_$$(date +%Y%m%d_%H%M%S).sql
 	@echo "数据库备份完成"
 
 restore-db: ## 恢复数据库（需要指定备份文件）
 	@echo "用法: make restore-db FILE=backup.sql"
-	docker-compose exec -T postgres psql -U postgres aily_db < $(FILE)
+	docker-compose exec -T postgres psql -U postgres prompthub_db < $(FILE)

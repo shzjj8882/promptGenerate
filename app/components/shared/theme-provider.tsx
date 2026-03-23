@@ -28,9 +28,15 @@ export function ThemeProvider({
   storageKey = "prompthub-theme",
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(
-    () => (typeof window !== "undefined" && (localStorage.getItem(storageKey) as Theme)) || defaultTheme
-  );
+  // 始终用 defaultTheme 作为初始值，避免 SSR/ hydration 时读取 localStorage 导致服务端与客户端不一致
+  const [theme, setTheme] = useState<Theme>(defaultTheme);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(storageKey) as Theme | null;
+    if (stored && ["light", "dark", "system"].includes(stored)) {
+      setTheme(stored);
+    }
+  }, [storageKey]);
 
   useEffect(() => {
     const root = window.document.documentElement;

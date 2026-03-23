@@ -1,4 +1,4 @@
-# Docker 忽略文件
+# Docker ignore (nginx build context: docker/)
 
 # Git
 .git
@@ -46,26 +46,25 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# 环境变量
+# Env
 .env
 .env.local
 .env.*.local
 
-# 系统文件
+# System
 .DS_Store
 Thumbs.db
 
-# 文档
+# Docs
 *.md
 !README.md
 
-# 测试
+# Test
 tests/
 *.test.ts
 *.test.tsx
 *.spec.ts
 *.spec.tsx
 
-# 其他
+# Other
 *.md
-前端优化建议*.md

@@ -351,9 +351,11 @@ export function TableCanvasView({
   }, [pinnedColsOrdered, columnWidths]);
 
   const totalWidth = useMemo(() => {
-    if (!visibleColumns.length && !effectiveTable?.columns?.length) return effectiveIdColumnWidth;
-    const dataWidth = visibleColumns.reduce((sum, col) => sum + (columnWidths[col.key] ?? DEFAULT_COLUMN_WIDTH), 0);
     const addColWidth = onAddColumn ? ADD_COLUMN_WIDTH : 0;
+    if (!visibleColumns.length && !effectiveTable?.columns?.length) {
+      return effectiveIdColumnWidth + addColWidth;
+    }
+    const dataWidth = visibleColumns.reduce((sum, col) => sum + (columnWidths[col.key] ?? DEFAULT_COLUMN_WIDTH), 0);
     return effectiveIdColumnWidth + dataWidth + addColWidth;
   }, [visibleColumns, columnWidths, onAddColumn, effectiveTable?.columns?.length, effectiveIdColumnWidth]);
 
@@ -420,9 +422,10 @@ export function TableCanvasView({
     [filteredRows.length]
   );
 
-  /** 传给 Canvas 的列：仅可见列，排除固定列，只绘制可横向滚动的列 */
+  /** 传给 Canvas 的列：仅可见列，排除固定列，只绘制可横向滚动的列。无可见列时若有 onAddColumn 仍显示「添加列」按钮 */
   const gridColumns = useMemo(() => {
-    if (!effectiveTable || !columnWidths || !visibleColumns.length) return [];
+    if (!effectiveTable || !columnWidths) return [];
+    if (!visibleColumns.length && !onAddColumn) return [];
     const tableWithVisible = { ...effectiveTable, columns: visibleColumns };
     const all = toGridColumns(tableWithVisible, columnWidths, { onAddColumn });
     if (!pinnedLeftColumnsState.length) return all;
