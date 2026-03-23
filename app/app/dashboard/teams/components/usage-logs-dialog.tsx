@@ -177,7 +177,7 @@ export function UsageLogsDialog({
                   <tr>
                     <th className="text-left p-2 font-medium">日期</th>
                     <th className="text-left p-2 font-medium">业务</th>
-                    <th className="text-right p-2 font-medium">Token 用量</th>
+                    <th className="text-right p-2 font-medium">积点用量</th>
                     <th className="text-right p-2 font-medium">调用次数</th>
                     <th className="text-left p-2 font-medium">记录时间</th>
                   </tr>
@@ -188,7 +188,7 @@ export function UsageLogsDialog({
                       <td className="p-2">{log.usage_date}</td>
                       <td className="p-2">{log.business_name ?? "-"}</td>
                       <td className="p-2 text-right font-mono">
-                        {log.tokens_used.toLocaleString()}
+                        {log.points_used.toLocaleString()}
                       </td>
                       <td className="p-2 text-right font-mono">
                         {log.calls_count.toLocaleString()}

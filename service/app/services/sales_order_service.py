@@ -109,31 +109,31 @@ class SalesOrderService:
         # 5. 记录当前用户消息到对话上下文
         # 使用 current_message 如果提供，否则使用 query
         user_message = request.current_message if request.current_message else request.query
-        logger.info(f"记录用户消息到对话上下文 [conversation_id: {request.conversation_id}]: {user_message[:100]}...")
+        logger.info("记录用户消息到对话上下文 [conversation_id: %s]: %s...", request.conversation_id, user_message[:100])
         await ConversationContextService.add_user_message(request.conversation_id, user_message)
         
         # 6. 获取对话历史消息（包含系统提示词）
-        logger.info(f"查询对话历史 [conversation_id: {request.conversation_id}]")
+        logger.info("查询对话历史 [conversation_id: %s]", request.conversation_id)
         messages = await ConversationContextService.get_conversation_messages(
             conversation_id=request.conversation_id,
             include_system=True,
             system_prompt=processed_prompt_content,
             max_history=20  # 最多保留20条历史消息
         )
-        logger.info(f"获取到 {len(messages)} 条消息（包含系统提示词）")
+        logger.info("获取到 %d 条消息（包含系统提示词）", len(messages))
         
         # 7. 调用LLM生成回复（使用对话历史）
-        logger.info(f"开始调用LLM生成回复 [conversation_id: {request.conversation_id}], 消息数量: {len(messages)}")
+        logger.info("开始调用LLM生成回复 [conversation_id: %s], 消息数量: %d", request.conversation_id, len(messages))
         response_text = await llm_service.chat_with_messages(
             messages=messages,
             temperature=0.3
         )
-        logger.info(f"LLM回复生成成功 [conversation_id: {request.conversation_id}], 回复长度: {len(response_text)} 字符")
-        logger.debug(f"LLM回复内容预览 [conversation_id: {request.conversation_id}]: {response_text[:200]}...")
+        logger.info("LLM回复生成成功 [conversation_id: %s], 回复长度: %d 字符", request.conversation_id, len(response_text))
+        logger.debug("LLM回复内容预览 [conversation_id: %s]: %s...", request.conversation_id, response_text[:200])
         
         # 8. 记录助手回复到对话上下文
         await ConversationContextService.add_assistant_message(request.conversation_id, response_text)
-        logger.info(f"助手回复已记录到对话上下文 [conversation_id: {request.conversation_id}]")
+        logger.info("助手回复已记录到对话上下文 [conversation_id: %s]", request.conversation_id)
         
         # 9. 尝试提取DMU数据并自动保存
         dmu_data = None
@@ -167,15 +167,14 @@ class SalesOrderService:
                             request=save_request,
                             tenant_id=tenant_id,
                         )
-                        logger.info(f"自动保存DMU报告成功 [conversation_id: {request.conversation_id}, company_name: {company_name}, report_id: {saved_report.id}]")
+                        logger.info("自动保存DMU报告成功 [conversation_id: %s, company_name: %s, report_id: %s]", request.conversation_id, company_name, saved_report.id)
                     else:
-                        logger.warning(f"无法自动保存DMU报告：缺少公司名称 [conversation_id: {request.conversation_id}]")
+                        logger.warning("无法自动保存DMU报告：缺少公司名称 [conversation_id: %s]", request.conversation_id)
                 except Exception as e:
-                    logger.error(f"自动保存DMU报告失败 [conversation_id: {request.conversation_id}]: {e}", exc_info=True)
+                    logger.error("自动保存DMU报告失败 [conversation_id: %s]: %s", request.conversation_id, e, exc_info=True)
                     # 保存失败不影响主流程
-        except Exception:
-            # 如果提取失败，不影响主流程
-            pass
+        except Exception as e:
+            logger.warning("DMU数据提取失败，不影响主流程: %s", e)
         
         return SalesOrderChatResponse(
             prompt=processed_prompt_content,

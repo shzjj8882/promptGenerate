@@ -6,7 +6,6 @@ import { observer } from "mobx-react-lite";
 import {
   Communication,
   Api,
-  Agreement,
   Plus,
   Pencil,
   Trash2,
@@ -193,7 +192,7 @@ function CompositionsClientImpl() {
   return (
     <div className="flex h-full flex-col gap-6">
       <PageHeader
-        title="组合"
+        title="组合模式"
         description="创建 LLM 消息模式或接口模式的组合，按步骤配置提示词、MCP 及通知方式"
         action={
           <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
@@ -237,9 +236,9 @@ function CompositionsClientImpl() {
                 key={comp.id}
                 icon={
                   comp.mode === "chat" ? (
-                    <Communication theme="outline" size={30} fill="#333" strokeLinejoin="miter" />
+                    <Communication theme="outline" size={30} fill="currentColor" strokeLinejoin="miter" />
                   ) : (
-                    <Api theme="outline" size={30} fill="#333" strokeLinejoin="miter" />
+                    <Api theme="outline" size={30} fill="currentColor" strokeLinejoin="miter" />
                   )
                 }
                 iconVariant={comp.mode === "chat" ? "chat" : "api"}
@@ -276,7 +275,11 @@ function CompositionsClientImpl() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-[140px]">
                         <DropdownMenuItem onClick={() => handleOpenPreview(comp)}>
-                          <Agreement theme="outline" size={24} fill="#333" strokeLinejoin="miter" className="mr-2 shrink-0" />
+                          {comp.mode === "chat" ? (
+                            <Communication className="mr-2 h-4 w-4 shrink-0" />
+                          ) : (
+                            <Api className="mr-2 h-4 w-4 shrink-0" />
+                          )}
                           文档
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => { setEditing(comp); setFormOpen(true); setWizardOpen(false); }}>
@@ -284,8 +287,8 @@ function CompositionsClientImpl() {
                           编辑
                         </DropdownMenuItem>
                         <DropdownMenuItem
+                          variant="destructive"
                           onClick={() => setDeleteTarget(comp)}
-                          className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           删除
@@ -337,7 +340,7 @@ function CompositionsClientImpl() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-white hover:bg-destructive/90">
               删除
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-对话上下文管理服务：优先使用 Redis 持久化，Redis 不可用时回退到内存存储。
-多实例部署时 Redis 可保证同一 conversation_id 的上下文一致。
+对话上下文管理服务：使用 Redis 持久化。
+Redis 不可用时抛出 503，不再回退到内存，避免多实例部署时各实例状态不一致。
 """
 import json
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 
+from fastapi import HTTPException, status
+
 # 配置日志
 logger = logging.getLogger(__name__)
+
+SERVICE_UNAVAILABLE_MSG = "对话上下文服务暂不可用，请稍后重试"
 
 # Redis key 前缀与默认 TTL（秒，24 小时）
 REDIS_KEY_PREFIX = "conversation:ctx:"
@@ -86,7 +90,8 @@ class ConversationContextService:
             try:
                 obj = json.loads(s)
                 out.append({"role": obj.get("role", "user"), "content": obj.get("content", "")})
-            except Exception:
+            except Exception as e:
+                logger.debug("对话消息 JSON 解析失败，跳过: %s", e)
                 continue
         return out
 
@@ -108,20 +113,22 @@ class ConversationContextService:
     @classmethod
     async def add_user_message(cls, conversation_id: str, content: str) -> None:
         redis = await cls._get_redis()
-        if redis:
-            await cls._add_message_redis(conversation_id, "user", content)
-        else:
-            ctx = cls._get_or_create_memory(conversation_id)
-            ctx.add_message("user", content)
+        if not redis:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=SERVICE_UNAVAILABLE_MSG,
+            )
+        await cls._add_message_redis(conversation_id, "user", content)
 
     @classmethod
     async def add_assistant_message(cls, conversation_id: str, content: str) -> None:
         redis = await cls._get_redis()
-        if redis:
-            await cls._add_message_redis(conversation_id, "assistant", content)
-        else:
-            ctx = cls._get_or_create_memory(conversation_id)
-            ctx.add_message("assistant", content)
+        if not redis:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=SERVICE_UNAVAILABLE_MSG,
+            )
+        await cls._add_message_redis(conversation_id, "assistant", content)
         logger.debug("添加助手回复到对话上下文 [conversation_id=%s]: %s...", conversation_id, (content[:100] if content else ""))
 
     @classmethod
@@ -133,14 +140,12 @@ class ConversationContextService:
         max_history: Optional[int] = None,
     ) -> List[Dict[str, str]]:
         redis = await cls._get_redis()
-        if redis:
-            history = await cls._get_messages_redis(conversation_id, max_history)
-        else:
-            ctx = cls._get_or_create_memory(conversation_id)
-            if max_history:
-                history = ctx.get_recent_messages(max_history)
-            else:
-                history = ctx.get_messages()
+        if not redis:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=SERVICE_UNAVAILABLE_MSG,
+            )
+        history = await cls._get_messages_redis(conversation_id, max_history)
 
         messages = []
         if include_system and system_prompt:
@@ -155,6 +160,12 @@ class ConversationContextService:
 
     @classmethod
     async def clear_conversation(cls, conversation_id: str) -> None:
+        redis = await cls._get_redis()
+        if not redis:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=SERVICE_UNAVAILABLE_MSG,
+            )
         await cls._clear_redis(conversation_id)
         if conversation_id in cls._contexts:
             del cls._contexts[conversation_id]

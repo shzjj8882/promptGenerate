@@ -1,12 +1,18 @@
 """
 Admin 团队管理相关路由
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, cast, String, or_
-from typing import Optional
+from typing import Annotated, Optional
 from datetime import datetime
 import calendar
+
+# team_id 路径参数：UUID 格式校验，非法格式返回 422 避免无效 DB 查询
+TEAM_ID_PATH = Annotated[
+    str,
+    Path(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+]
 
 from app.core.database import get_db
 from app.core.response import ResponseModel
@@ -54,7 +60,7 @@ async def create_team(
         team = await TeamService.create_team(db, team_data)
         team_response = TeamResponse.model_validate(team)
         return ResponseModel.success_response(
-            data=team_response.model_dump(),
+            data=team_response.model_dump(by_alias=True),
             message="创建团队成功",
             code=status.HTTP_201_CREATED
         )
@@ -84,45 +90,16 @@ async def get_teams(
     team_list = []
     for team in teams:
         team_resp = TeamResponse.model_validate(team)
-
-        # 成员数量
         member_count = await TeamService.get_team_member_count(db, team.code)
-        team_dict = team_resp.model_dump()
-        team_dict["member_count"] = member_count
-
-        # 仅剩追加/赠送时视为无合约：若所有 plan 的 base_token_limit 均为 0，则 plan_expire_at 按无合约处理
-        plans_check = await db.execute(
-            select(TeamMonthlyPlan.base_token_limit).where(TeamMonthlyPlan.team_id == team.id)
-        )
-        plans_bases = [r[0] for r in plans_check.fetchall()]
-        if plans_bases and not any((b or 0) > 0 for b in plans_bases):
-            team_dict["plan_expire_at"] = None
-
-        # 当前月配额信息
-        token_limit, call_limit = await TeamQuotaService._get_effective_plan_limits(
+        team_resp = await TeamQuotaService.enrich_team_response(
             db=db,
             team=team,
             year_month=year_month,
+            team_response=team_resp,
+            apply_plans_check=True,
         )
-        usage_result = await db.execute(
-            select(TeamMonthlyTokenUsage).where(
-                TeamMonthlyTokenUsage.team_id == team.id,
-                TeamMonthlyTokenUsage.year_month == year_month,
-            )
-        )
-        usage: Optional[TeamMonthlyTokenUsage] = usage_result.scalar_one_or_none()
-
-        # 展示给前端的 token 上限 = 本月基础上限 + 上月结转（若已生成用量记录）
-        effective_token_limit = token_limit
-        if effective_token_limit and effective_token_limit > 0 and usage:
-            effective_token_limit = effective_token_limit + (usage.rollover_from_prev_tokens or 0)
-
-        team_dict["current_month_year_month"] = year_month
-        team_dict["current_month_token_limit"] = effective_token_limit
-        team_dict["current_month_call_limit"] = call_limit
-        team_dict["current_month_tokens_used"] = usage.tokens_used if usage else 0
-        team_dict["current_month_calls_used"] = usage.calls_used if usage else 0
-
+        team_dict = team_resp.model_dump(by_alias=True)
+        team_dict["member_count"] = member_count
         team_list.append(team_dict)
 
     return ResponseModel.success_response(
@@ -167,83 +144,19 @@ async def get_my_team(
             detail="团队不存在"
         )
 
-    team_response = TeamResponse.model_validate(team)
-    team_dict = team_response.model_dump()
-
-    # 附带当前月份配额与用量（允许团队成员查看自身团队使用量）
     now = datetime.utcnow()
     year_month = now.strftime("%Y-%m")
-    token_limit, call_limit = await TeamQuotaService._get_effective_plan_limits(
+    team_response = await TeamQuotaService.enrich_team_response(
         db=db,
         team=team,
         year_month=year_month,
+        team_response=TeamResponse.model_validate(team),
     )
-    usage_result = await db.execute(
-        select(TeamMonthlyTokenUsage).where(
-            TeamMonthlyTokenUsage.team_id == team.id,
-            TeamMonthlyTokenUsage.year_month == year_month,
-        )
+    breakdown = await TeamQuotaService.get_current_month_breakdown(
+        db=db, team=team, year_month=year_month
     )
-    usage: Optional[TeamMonthlyTokenUsage] = usage_result.scalar_one_or_none()
-    effective_token_limit = token_limit
-    if effective_token_limit and effective_token_limit > 0 and usage:
-        effective_token_limit = effective_token_limit + (usage.rollover_from_prev_tokens or 0)
-
-    team_dict["current_month_year_month"] = year_month
-    team_dict["current_month_token_limit"] = effective_token_limit
-    team_dict["current_month_call_limit"] = call_limit
-    team_dict["current_month_tokens_used"] = usage.tokens_used if usage else 0
-    team_dict["current_month_calls_used"] = usage.calls_used if usage else 0
-
-    # 三张统计卡片所需分项：套餐状态、套餐外额度、上月结余
-    plan_result = await db.execute(
-        select(TeamMonthlyPlan).where(
-            TeamMonthlyPlan.team_id == team.id,
-            TeamMonthlyPlan.year_month == year_month,
-        )
-    )
-    plan: Optional[TeamMonthlyPlan] = plan_result.scalar_one_or_none()
-    base = (plan.base_token_limit or 0) if plan else 0
-    gift = (plan.gift_tokens or 0) if plan else 0
-    extra = (plan.extra_tokens or 0) if plan else 0
-    # 赠送/购买通用月份：当月 gift+extra 为 0 时，取首个有 topup 的月份作为总额（与管理员视图一致）
-    if gift + extra == 0:
-        fallback_result = await db.execute(
-            select(TeamMonthlyPlan)
-            .where(TeamMonthlyPlan.team_id == team.id)
-            .where(
-                or_(
-                    TeamMonthlyPlan.gift_tokens > 0,
-                    TeamMonthlyPlan.extra_tokens > 0,
-                )
-            )
-            .order_by(TeamMonthlyPlan.year_month.asc())
-            .limit(1)
-        )
-        fallback_plan = fallback_result.scalar_one_or_none()
-        if fallback_plan:
-            gift = fallback_plan.gift_tokens or 0
-            extra = fallback_plan.extra_tokens or 0
-    rollover = await TeamQuotaService._compute_rollover_from_previous_month(
-        db=db, team=team, current_year_month=year_month
-    )
-    tokens_used = usage.tokens_used if usage else 0
-    g_used = (getattr(usage, "gift_tokens_used", None) or 0) if usage else 0
-    r_used = (getattr(usage, "rollover_tokens_used", None) or 0) if usage else 0
-    b_used = (getattr(usage, "base_tokens_used", None) or 0) if usage else 0
-    e_used = (getattr(usage, "extra_tokens_used", None) or 0) if usage else 0
-    team_dict["current_month_breakdown"] = {
-        "year_month": year_month,
-        "base_token_limit": base,
-        "gift_tokens": gift,
-        "extra_tokens": extra,
-        "rollover_from_prev_tokens": rollover,
-        "tokens_used": tokens_used,
-        "gift_tokens_used": g_used,
-        "rollover_tokens_used": r_used,
-        "base_tokens_used": b_used,
-        "extra_tokens_used": e_used,
-    }
+    team_dict = team_response.model_dump(by_alias=True)
+    team_dict["current_month_breakdown"] = breakdown
 
     return ResponseModel.success_response(
         data=team_dict,
@@ -342,7 +255,7 @@ async def get_my_team_usage_logs(
     total_result = await db.execute(count_q)
     total = total_result.scalar() or 0
     return ResponseModel.success_response(
-        data={"items": [i.model_dump() for i in items], "total": total, "skip": skip, "limit": limit},
+        data={"items": [i.model_dump(by_alias=True) for i in items], "total": total, "skip": skip, "limit": limit},
         message="获取用量日志成功",
         code=status.HTTP_200_OK,
     )
@@ -379,7 +292,7 @@ async def reset_my_team_authcode(
 
     team_response = TeamResponse.model_validate(updated_team)
     return ResponseModel.success_response(
-        data=team_response.model_dump(),
+        data=team_response.model_dump(by_alias=True),
         message="重置认证码成功",
         code=status.HTTP_200_OK
     )
@@ -387,7 +300,7 @@ async def reset_my_team_authcode(
 
 @router.get("/teams/{team_id}", summary="获取团队详情", tags=["管理接口 > 团队管理"])
 async def get_team(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
 ):
@@ -399,44 +312,17 @@ async def get_team(
             detail="团队不存在"
         )
     
-    team_response = TeamResponse.model_validate(team)
-    team_dict = team_response.model_dump()
-
-    # 仅剩追加/赠送时视为无合约
-    plans_check = await db.execute(
-        select(TeamMonthlyPlan.base_token_limit).where(TeamMonthlyPlan.team_id == team.id)
-    )
-    plans_bases = [r[0] for r in plans_check.fetchall()]
-    if plans_bases and not any((b or 0) > 0 for b in plans_bases):
-        team_dict["plan_expire_at"] = None
-
-    # 附带当前月份配额信息
     now = datetime.utcnow()
     year_month = now.strftime("%Y-%m")
-    token_limit, call_limit = await TeamQuotaService._get_effective_plan_limits(
+    team_response = await TeamQuotaService.enrich_team_response(
         db=db,
         team=team,
         year_month=year_month,
+        team_response=TeamResponse.model_validate(team),
+        apply_plans_check=True,
     )
-    usage_result = await db.execute(
-        select(TeamMonthlyTokenUsage).where(
-            TeamMonthlyTokenUsage.team_id == team.id,
-            TeamMonthlyTokenUsage.year_month == year_month,
-        )
-    )
-    usage: Optional[TeamMonthlyTokenUsage] = usage_result.scalar_one_or_none()
-    # 展示给前端的 token 上限 = 本月基础上限 + 上月结转（若已生成用量记录）
-    effective_token_limit = token_limit
-    if effective_token_limit and effective_token_limit > 0 and usage:
-        effective_token_limit = effective_token_limit + (usage.rollover_from_prev_tokens or 0)
-
-    team_dict["current_month_year_month"] = year_month
-    team_dict["current_month_token_limit"] = effective_token_limit
-    team_dict["current_month_call_limit"] = call_limit
-    team_dict["current_month_tokens_used"] = usage.tokens_used if usage else 0
-    team_dict["current_month_calls_used"] = usage.calls_used if usage else 0
     return ResponseModel.success_response(
-        data=team_dict,
+        data=team_response.model_dump(by_alias=True),
         message="获取团队详情成功",
         code=status.HTTP_200_OK
     )
@@ -444,7 +330,7 @@ async def get_team(
 
 @router.put("/teams/{team_id}", summary="更新团队", tags=["管理接口 > 团队管理"])
 async def update_team(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     team_data: TeamUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -460,7 +346,7 @@ async def update_team(
         
         team_response = TeamResponse.model_validate(team)
         return ResponseModel.success_response(
-            data=team_response.model_dump(),
+            data=team_response.model_dump(by_alias=True),
             message="更新团队成功",
             code=status.HTTP_200_OK
         )
@@ -473,7 +359,7 @@ async def update_team(
 
 @router.post("/teams/{team_id}/reset-authcode", summary="重置团队认证码", tags=["管理接口 > 团队管理"])
 async def reset_team_authcode(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
 ):
@@ -495,7 +381,7 @@ async def reset_team_authcode(
 
 @router.delete("/teams/{team_id}", summary="删除团队", tags=["管理接口 > 团队管理"])
 async def delete_team(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
 ):
@@ -516,7 +402,7 @@ async def delete_team(
 
 @router.get("/teams/{team_id}/members", summary="获取团队成员列表", tags=["管理接口 > 团队管理"])
 async def get_team_members(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     skip: int = Query(0, ge=0, description="跳过数量"),
     limit: int = Query(100, ge=1, le=1000, description="返回数量"),
     search: Optional[str] = Query(None, description="搜索关键词（用户名、邮箱、全名）"),
@@ -590,7 +476,7 @@ def _plan_effective_token_limit(plan: TeamMonthlyPlan, team: Team) -> Optional[i
     tags=["管理接口 > 团队管理"],
 )
 async def get_team_quota_detail(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     year_month: Optional[str] = Query(
         None,
         description="月份，格式 YYYY-MM；为空表示当前月",
@@ -636,7 +522,7 @@ async def get_team_quota_detail(
     )
 
     return ResponseModel.success_response(
-        data=detail.model_dump(),
+        data=detail.model_dump(by_alias=True),
         message="获取团队配额详情成功",
         code=status.HTTP_200_OK,
     )
@@ -648,7 +534,7 @@ async def get_team_quota_detail(
     tags=["管理接口 > 团队管理"],
 )
 async def update_team_quota(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     body: TeamQuotaUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -708,14 +594,13 @@ async def update_team_quota(
         team_id=team.id,
         year_month=ym,
         token_limit=token_limit,
-#         call_limit=call_limit,
         call_limit=call_limit,
         tokens_used=usage.tokens_used if usage else 0,
         calls_used=usage.calls_used if usage else 0,
     )
 
     return ResponseModel.success_response(
-        data=detail.model_dump(),
+        data=detail.model_dump(by_alias=True),
         message="更新团队套餐成功",
         code=status.HTTP_200_OK,
     )
@@ -723,11 +608,11 @@ async def update_team_quota(
 
 @router.post(
     "/teams/{team_id}/quota/topup",
-    summary="为团队某月套餐追加 token 上限",
+    summary="为团队某月套餐追加积点上限",
     tags=["管理接口 > 团队管理"],
 )
 async def topup_team_quota_tokens(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     body: TeamQuotaTopupRequest,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -837,8 +722,8 @@ async def topup_team_quota_tokens(
     )
 
     return ResponseModel.success_response(
-        data=detail.model_dump(),
-        message="追加 token 上限成功",
+        data=detail.model_dump(by_alias=True),
+        message="追加积点上限成功",
         code=status.HTTP_200_OK,
     )
 
@@ -849,7 +734,7 @@ async def topup_team_quota_tokens(
     tags=["管理接口 > 团队管理"],
 )
 async def set_team_package(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     body: TeamPackageRequest,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -948,15 +833,14 @@ async def set_team_package(
     if effective_token_limit and effective_token_limit > 0 and usage:
         effective_token_limit = effective_token_limit + (usage.rollover_from_prev_tokens or 0)
 
-    team_dict = team_response.model_dump()
-    team_dict["current_month_year_month"] = current_ym
-    team_dict["current_month_token_limit"] = effective_token_limit
-    team_dict["current_month_call_limit"] = call_limit
-    team_dict["current_month_tokens_used"] = usage.tokens_used if usage else 0
-    team_dict["current_month_calls_used"] = usage.calls_used if usage else 0
+    team_response.current_month_year_month = current_ym
+    team_response.current_month_token_limit = effective_token_limit
+    team_response.current_month_call_limit = call_limit
+    team_response.current_month_tokens_used = usage.tokens_used if usage else 0
+    team_response.current_month_calls_used = usage.calls_used if usage else 0
 
     return ResponseModel.success_response(
-        data=team_dict,
+        data=team_response.model_dump(by_alias=True),
         message="套餐设置成功",
         code=status.HTTP_200_OK,
     )
@@ -973,7 +857,7 @@ def _last_day_of_month(year: int, month: int) -> int:
     tags=["管理接口 > 团队管理"],
 )
 async def delete_team_monthly_plan(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     months: int = Query(1, ge=1, le=120, description="解约月数，从最后一个月开始往前数，如 3 表示解约 8、7、6 月"),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -1094,7 +978,7 @@ async def delete_team_monthly_plan(
 
     return ResponseModel.success_response(
         data={
-            **detail.model_dump(),
+            **detail.model_dump(by_alias=True),
             "cancelled_months": to_cancel,
             "cancelled_count": len(to_cancel),
         },
@@ -1109,7 +993,7 @@ async def delete_team_monthly_plan(
     tags=["管理接口 > 团队管理"],
 )
 async def get_team_package_overview(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
 ):
@@ -1139,7 +1023,7 @@ async def get_team_package_overview(
             months=[],
         )
         return ResponseModel.success_response(
-            data=overview.model_dump(),
+            data=overview.model_dump(by_alias=True),
             message="暂无套餐配置",
             code=status.HTTP_200_OK,
         )
@@ -1229,7 +1113,7 @@ async def get_team_package_overview(
     )
 
     return ResponseModel.success_response(
-        data=overview.model_dump(),
+        data=overview.model_dump(by_alias=True),
         message="获取套餐区间成功",
         code=status.HTTP_200_OK,
     )
@@ -1241,7 +1125,7 @@ async def get_team_package_overview(
     tags=["管理接口 > 团队管理"],
 )
 async def get_team_payment_logs(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -1272,7 +1156,7 @@ async def get_team_payment_logs(
     tags=["管理接口 > 团队管理"],
 )
 async def get_team_usage_daily(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     year_month: Optional[str] = Query(None, description="月份 YYYY-MM，为空则取当前月"),
     start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
@@ -1302,7 +1186,7 @@ async def get_team_usage_daily(
     rows = result.fetchall()
     items = [TeamUsageDailyItem(date=r[0], tokens_used=r[1] or 0) for r in rows]
     return ResponseModel.success_response(
-        data={"items": [i.model_dump() for i in items]},
+        data={"items": [i.model_dump(by_alias=True) for i in items]},
         message="获取按日用量成功",
         code=status.HTTP_200_OK,
     )
@@ -1314,7 +1198,7 @@ async def get_team_usage_daily(
     tags=["管理接口 > 团队管理"],
 )
 async def get_team_usage_by_business(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     year_month: Optional[str] = Query(None, description="月份 YYYY-MM，为空则取当前月"),
     start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
@@ -1358,7 +1242,7 @@ async def get_team_usage_by_business(
             bn = "未知"
         items.append(TeamUsageByBusinessItem(business_name=bn, tokens_used=r[1] or 0))
     return ResponseModel.success_response(
-        data={"items": [i.model_dump() for i in items]},
+        data={"items": [i.model_dump(by_alias=True) for i in items]},
         message="获取按业务用量成功",
         code=status.HTTP_200_OK,
     )
@@ -1370,7 +1254,7 @@ async def get_team_usage_by_business(
     tags=["管理接口 > 团队管理"],
 )
 async def get_team_usage_logs(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     skip: int = Query(0, ge=0, description="跳过数量"),
     limit: int = Query(100, ge=1, le=500, description="每页数量"),
     year_month: Optional[str] = Query(None, description="月份 YYYY-MM，为空则返回全部"),
@@ -1414,7 +1298,7 @@ async def get_team_usage_logs(
 
     return ResponseModel.success_response(
         data={
-            "items": [i.model_dump() for i in items],
+            "items": [i.model_dump(by_alias=True) for i in items],
             "total": total,
             "skip": skip,
             "limit": limit,
@@ -1430,7 +1314,7 @@ async def get_team_usage_logs(
     tags=["管理接口 > 团队管理"],
 )
 async def reset_team_current_month_usage(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     year_month: Optional[str] = Query(None, description="月份 YYYY-MM，默认当月"),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(require_superuser),
@@ -1479,7 +1363,7 @@ async def reset_team_current_month_usage(
     tags=["管理接口 > 团队管理"],
 )
 async def clear_team_logs(
-    team_id: str,
+    team_id: TEAM_ID_PATH,
     full_reset: bool = Query(
         False,
         description="为 true 时同时删除合约和用量统计，团队将无合约",

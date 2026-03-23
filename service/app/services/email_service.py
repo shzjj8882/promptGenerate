@@ -14,6 +14,7 @@ from email import encoders
 from typing import Any, Dict
 
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # SendCloud 邮件发送（与 curl -F multipart/form-data 一致）
 SENDCLOUD_API_URL = "https://api2.sendcloud.net/api/mail/send"
@@ -119,6 +120,11 @@ class EmailService:
         return await EmailService._send_sendcloud(config, to, subject, content, content_type)
 
     @staticmethod
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+    )
     async def _send_sendcloud(
         config: Dict[str, Any],
         to: str,
@@ -164,6 +170,8 @@ class EmailService:
                     logger.warning("SendCloud 返回失败: %s", result)
                 else:
                     logger.warning("SendCloud HTTP 错误: %s %s", resp.status_code, resp.text)
+        except (httpx.TimeoutException, httpx.ConnectError):
+            raise  # 重新抛出以便 tenacity 重试
         except Exception as e:
             logger.exception("SendCloud 邮件发送异常: %s", e)
         return False

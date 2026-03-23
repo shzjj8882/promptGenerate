@@ -150,7 +150,7 @@ export function DashboardGrid({
                 tableChartCategoryColumnKey={item.tableChartCategoryColumnKey}
                 tableChartValueColumnKeys={item.tableChartValueColumnKeys}
                 tableChartPieAggregate={item.tableChartPieAggregate}
-                tableColumnWidths={(item as any).tableColumnWidths}
+                tableColumnWidths={item.tableColumnWidths}
                 allowConfig={isConfiguring}
                 onUpdateTable={onUpdateTableConfig}
               />
@@ -169,9 +169,9 @@ export function DashboardGrid({
             <div key={item.i} className="min-h-0 h-full">
               <WidgetTeamCode
                 {...common}
-                teamCodeDisplayMode={(item as any).teamCodeDisplayMode ?? "authcode"}
-                teamCodeUsageCard={(item as any).teamCodeUsageCard ?? "package"}
-                teamCodeChartType={(item as any).teamCodeChartType ?? "line"}
+                teamCodeDisplayMode={item.teamCodeDisplayMode ?? "authcode"}
+                teamCodeUsageCard={item.teamCodeUsageCard ?? "package"}
+                teamCodeChartType={item.teamCodeChartType ?? "line"}
                 onUpdateConfig={onUpdateTeamCodeConfig}
                 allowConfig={isConfiguring}
               />

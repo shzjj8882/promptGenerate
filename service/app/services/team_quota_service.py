@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_, select
@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.team import Team
 from app.models.team_token_usage import TeamMonthlyTokenUsage
 from app.models.team_monthly_plan import TeamMonthlyPlan
+
+if TYPE_CHECKING:
+    from app.schemas.team import TeamResponse
 
 
 class TeamQuotaService:
@@ -27,20 +30,20 @@ class TeamQuotaService:
         requested_tokens: Optional[int],
     ) -> None:
         """
-        校验团队当月 token 配额，并累计一次请求的预计消耗。
+        校验团队当月积点配额，并累计一次请求的消耗。
 
         Args:
             db: 异步会话
             team_id: 团队 ID（为空时不做校验，例如使用全局 API Key 的场景）
-            requested_tokens: 本次预计最大 token 消耗（通常取 llm_config.max_tokens）
+            requested_tokens: 本次消耗的平台积点数（LLM 调用固定 1 点/次，多维表格 1 点/次）
         """
         if not team_id:
             # 无法确定团队的场景（如全局 API Key），暂不做配额控制
             return
 
         if not requested_tokens or requested_tokens <= 0:
-            # 未指定 max_tokens 时，使用一个温和的默认值做估算
-            requested_tokens = 512
+            # 未指定时使用默认 1 点（平台积点，非 LLM token）
+            requested_tokens = 1
 
         # 加载团队信息
         result = await db.execute(select(Team).where(Team.id == team_id))
@@ -110,7 +113,7 @@ class TeamQuotaService:
             if new_tokens_total > effective_token_cap:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="本月团队 token 配额已用完，请联系管理员扩容或续费",
+                    detail="本月团队积点配额已用完，请联系管理员扩容或续费",
                 )
             # 按优先级扣减并记录：赠送 > 结余 > 套餐 > 追加
             g_used = getattr(usage, "gift_tokens_used", None) or 0
@@ -146,6 +149,63 @@ class TeamQuotaService:
             usage.calls_used = new_calls_total
 
         await db.commit()
+
+    @staticmethod
+    async def refund_points(
+        db: AsyncSession,
+        team_id: Optional[str],
+        amount: int = 1,
+    ) -> bool:
+        """
+        退还平台积点（失败补偿）。按消费逆序从 extra -> base -> rollover -> gift 扣减分项。
+        支持多 Worker：调用方需保证同一任务只触发一次（如用 task.quota_refunded_at 防重）。
+
+        Args:
+            db: 异步会话
+            team_id: 团队 ID
+            amount: 退还积点数
+
+        Returns:
+            是否成功退还（team_id 无效或 amount<=0 时返回 False）
+        """
+        if not team_id or amount <= 0:
+            return False
+        year_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        usage_result = await db.execute(
+            select(TeamMonthlyTokenUsage).where(
+                TeamMonthlyTokenUsage.team_id == team_id,
+                TeamMonthlyTokenUsage.year_month == year_month,
+            )
+        )
+        usage: Optional[TeamMonthlyTokenUsage] = usage_result.scalar_one_or_none()
+        if not usage:
+            return False
+        g_used = getattr(usage, "gift_tokens_used", None) or 0
+        r_used = getattr(usage, "rollover_tokens_used", None) or 0
+        b_used = getattr(usage, "base_tokens_used", None) or 0
+        e_used = getattr(usage, "extra_tokens_used", None) or 0
+        total = usage.tokens_used or 0
+        refund = min(amount, total)
+        if refund <= 0:
+            return True
+        # 逆序退还：extra -> base -> rollover -> gift
+        rem = refund
+        de = min(rem, e_used)
+        usage.extra_tokens_used = e_used - de
+        rem -= de
+        db_dec = min(rem, b_used)
+        usage.base_tokens_used = b_used - db_dec
+        rem -= db_dec
+        dr = min(rem, r_used)
+        usage.rollover_tokens_used = r_used - dr
+        rem -= dr
+        dg = min(rem, g_used)
+        usage.gift_tokens_used = g_used - dg
+        usage.tokens_used = max(0, total - refund)
+        if usage.calls_used and usage.calls_used > 0:
+            usage.calls_used = usage.calls_used - 1
+        await db.commit()
+        return True
 
     @staticmethod
     async def record_usage_without_check(
@@ -422,3 +482,110 @@ class TeamQuotaService:
         # 回退：旧数据或无分项时，按消费顺序推算套餐基础已用
         base_used = min(max(0, used - prev_gift - prev_rollover), prev_base)
         return max(0, prev_base - base_used)
+
+    @staticmethod
+    async def enrich_team_response(
+        db: AsyncSession,
+        team: Team,
+        year_month: str,
+        team_response: Optional["TeamResponse"] = None,
+        apply_plans_check: bool = False,
+    ) -> "TeamResponse":
+        """
+        为团队响应填充当前月份配额与用量信息（current_month_* 字段）。
+
+        Args:
+            db: 异步会话
+            team: 团队 ORM 对象
+            year_month: 月份，格式 YYYY-MM
+            team_response: 已有 TeamResponse，若为 None 则从 team 创建
+            apply_plans_check: 若为 True，当所有 plan 的 base_token_limit 均为 0 时，
+                              将 plan_expire_at 设为 None（仅剩赠送/追加视为无合约）
+
+        Returns:
+            填充了 current_month_* 的 TeamResponse
+        """
+        from app.schemas.team import TeamResponse
+
+        if team_response is None:
+            team_response = TeamResponse.model_validate(team)
+
+        if apply_plans_check:
+            plans_check = await db.execute(
+                select(TeamMonthlyPlan.base_token_limit).where(
+                    TeamMonthlyPlan.team_id == team.id
+                )
+            )
+            plans_bases = [r[0] for r in plans_check.fetchall()]
+            if plans_bases and not any((b or 0) > 0 for b in plans_bases):
+                team_response.plan_expire_at = None
+
+        token_limit, call_limit = await TeamQuotaService._get_effective_plan_limits(
+            db=db,
+            team=team,
+            year_month=year_month,
+        )
+        usage_result = await db.execute(
+            select(TeamMonthlyTokenUsage).where(
+                TeamMonthlyTokenUsage.team_id == team.id,
+                TeamMonthlyTokenUsage.year_month == year_month,
+            )
+        )
+        usage: Optional[TeamMonthlyTokenUsage] = usage_result.scalar_one_or_none()
+
+        effective_token_limit = token_limit
+        if effective_token_limit and effective_token_limit > 0 and usage:
+            effective_token_limit = effective_token_limit + (
+                usage.rollover_from_prev_tokens or 0
+            )
+
+        team_response.current_month_year_month = year_month
+        team_response.current_month_token_limit = effective_token_limit
+        team_response.current_month_call_limit = call_limit
+        team_response.current_month_tokens_used = usage.tokens_used if usage else 0
+        team_response.current_month_calls_used = usage.calls_used if usage else 0
+
+        return team_response
+
+    @staticmethod
+    async def get_current_month_breakdown(
+        db: AsyncSession,
+        team: Team,
+        year_month: str,
+    ) -> dict:
+        """
+        获取当前月份配额分项（供 get_my_team 等接口使用）。
+        返回 base_points_limit、gift_points、extra_points、rollover_from_prev_points、
+        points_used 及分项用量。
+        """
+        base, gift, extra = await TeamQuotaService._get_plan_breakdown(
+            db, team, year_month
+        )
+        rollover = await TeamQuotaService._compute_rollover_from_previous_month(
+            db=db, team=team, current_year_month=year_month
+        )
+        usage_result = await db.execute(
+            select(TeamMonthlyTokenUsage).where(
+                TeamMonthlyTokenUsage.team_id == team.id,
+                TeamMonthlyTokenUsage.year_month == year_month,
+            )
+        )
+        usage: Optional[TeamMonthlyTokenUsage] = usage_result.scalar_one_or_none()
+        tokens_used = usage.tokens_used if usage else 0
+        g_used = (getattr(usage, "gift_tokens_used", None) or 0) if usage else 0
+        r_used = (getattr(usage, "rollover_tokens_used", None) or 0) if usage else 0
+        b_used = (getattr(usage, "base_tokens_used", None) or 0) if usage else 0
+        e_used = (getattr(usage, "extra_tokens_used", None) or 0) if usage else 0
+
+        return {
+            "year_month": year_month,
+            "base_points_limit": base,
+            "gift_points": gift,
+            "extra_points": extra,
+            "rollover_from_prev_points": rollover,
+            "points_used": tokens_used,
+            "gift_points_used": g_used,
+            "rollover_points_used": r_used,
+            "base_points_used": b_used,
+            "extra_points_used": e_used,
+        }

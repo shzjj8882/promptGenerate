@@ -360,7 +360,7 @@ function UserRolesClientImpl(props: UserRolesClientProps = {}) {
   return (
     <div className="flex h-full flex-col gap-6">
       <PageHeader
-        title="用户权限分配"
+        title="权限分配"
         description="为用户分配角色，角色决定了用户拥有的菜单权限和接口权限"
       />
 

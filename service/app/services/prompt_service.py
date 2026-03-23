@@ -197,7 +197,7 @@ class PromptService:
             except json.JSONDecodeError as e:
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.warning(f"缓存数据格式错误，key={cache_key}: {e}")
+                logger.warning("缓存数据格式错误，key=%s: %s", cache_key, e)
                 # 删除损坏的缓存
                 try:
                     await redis_client.delete(cache_key)
@@ -206,7 +206,7 @@ class PromptService:
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.warning(f"缓存读取失败，key={cache_key}: {e}")
+                logger.warning("缓存读取失败，key=%s: %s", cache_key, e)
         
         # 查询数据库（优化：并行查询团队和全局默认提示词）
         import asyncio
@@ -495,14 +495,14 @@ class PlaceholderService:
                         for item in data_list
                     ]
             except json.JSONDecodeError as e:
-                logger.warning(f"缓存数据格式错误，key={cache_key}: {e}")
+                logger.warning("缓存数据格式错误，key=%s: %s", cache_key, e)
                 # 删除损坏的缓存
                 try:
                     await redis_client.delete(cache_key)
                 except Exception:
                     pass
             except Exception as e:
-                logger.warning(f"缓存读取失败，key={cache_key}: {e}")
+                logger.warning("缓存读取失败，key=%s: %s", cache_key, e)
         
         # 通过关联表查询：先查找场景，然后通过关联表查询占位符
         # 使用 SceneService.get_by_code 方法，它会自动处理团队隔离

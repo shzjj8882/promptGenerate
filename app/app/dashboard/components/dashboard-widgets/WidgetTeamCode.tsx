@@ -53,6 +53,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { UsageStatCard } from "@/app/dashboard/teams/components/usage-stat-card";
 import { UsageLogsDialog } from "@/app/dashboard/teams/components/usage-logs-dialog";
 import type { WidgetSize } from "./types";
@@ -149,7 +150,7 @@ function WidgetTeamCodeImpl({
   onUpdateConfig,
   allowConfig = false,
 }: WidgetTeamCodeProps) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard({ resetDelay: 2000 });
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
@@ -159,24 +160,24 @@ function WidgetTeamCodeImpl({
   const [configChartType, setConfigChartType] = useState<TeamCodeChartType>(teamCodeChartType);
   const prevConfigOpen = useRef(false);
   const [teamUsage, setTeamUsage] = useState<{
-    tokens_used: number;
-    token_limit: number | null;
+    points_used: number;
+    points_limit: number | null;
     year_month: string;
     breakdown?: {
-      base_token_limit: number;
-      gift_tokens: number;
-      extra_tokens: number;
-      rollover_from_prev_tokens: number;
-      tokens_used: number;
-      gift_tokens_used: number;
-      rollover_tokens_used: number;
-      base_tokens_used: number;
-      extra_tokens_used: number;
+      base_points_limit: number;
+      gift_points: number;
+      extra_points: number;
+      rollover_from_prev_points: number;
+      points_used: number;
+      gift_points_used: number;
+      rollover_points_used: number;
+      base_points_used: number;
+      extra_points_used: number;
     };
   } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
-  const [dailyItems, setDailyItems] = useState<{ date: string; tokens_used: number }[]>([]);
-  const [byBusinessItems, setByBusinessItems] = useState<{ business_name: string; tokens_used: number }[]>([]);
+  const [dailyItems, setDailyItems] = useState<{ date: string; points_used: number }[]>([]);
+  const [byBusinessItems, setByBusinessItems] = useState<{ business_name: string; points_used: number }[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -224,8 +225,8 @@ function WidgetTeamCodeImpl({
       getMyTeam()
         .then((res) => {
           setTeamUsage({
-            tokens_used: res.current_month_tokens_used ?? 0,
-            token_limit: res.current_month_token_limit ?? null,
+            points_used: res.current_month_points_used ?? 0,
+            points_limit: res.current_month_points_limit ?? null,
             year_month: res.current_month_year_month ?? "",
             breakdown: res.current_month_breakdown,
           });
@@ -262,16 +263,9 @@ function WidgetTeamCodeImpl({
   const teamAuthcode = userStore.user?.team_authcode;
   const teamCode = userStore.user?.team_code;
 
-  const handleCopyAuthcode = useCallback(async () => {
-    if (!teamAuthcode) return;
-    try {
-      await navigator.clipboard.writeText(teamAuthcode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      logger.error("复制失败", err);
-    }
-  }, [teamAuthcode]);
+  const handleCopyAuthcode = useCallback(() => {
+    if (teamAuthcode) copy(teamAuthcode);
+  }, [teamAuthcode, copy]);
 
   const handleResetAuthcode = useCallback(async () => {
     setResetting(true);
@@ -318,31 +312,31 @@ function WidgetTeamCodeImpl({
 
   if (isUsageWithBreakdown) {
     const b = teamUsage!.breakdown!;
-    const baseLimit = b.base_token_limit ?? 0;
-    const giftTokens = b.gift_tokens ?? 0;
-    const extraTokens = b.extra_tokens ?? 0;
-    const rollover = b.rollover_from_prev_tokens ?? 0;
-    const tokensUsed = b.tokens_used;
+    const baseLimit = b.base_points_limit ?? 0;
+    const giftPoints = b.gift_points ?? 0;
+    const extraPoints = b.extra_points ?? 0;
+    const rollover = b.rollover_from_prev_points ?? 0;
+    const pointsUsed = b.points_used;
     const hasRecorded =
-      (b.gift_tokens_used ?? 0) +
-      (b.rollover_tokens_used ?? 0) +
-      (b.base_tokens_used ?? 0) +
-      (b.extra_tokens_used ?? 0) ===
-      tokensUsed;
-    const giftUsed = hasRecorded ? (b.gift_tokens_used ?? 0) : Math.min(tokensUsed, giftTokens);
+      (b.gift_points_used ?? 0) +
+      (b.rollover_points_used ?? 0) +
+      (b.base_points_used ?? 0) +
+      (b.extra_points_used ?? 0) ===
+      pointsUsed;
+    const giftUsed = hasRecorded ? (b.gift_points_used ?? 0) : Math.min(pointsUsed, giftPoints);
     const rolloverUsed = hasRecorded
-      ? (b.rollover_tokens_used ?? 0)
-      : Math.min(tokensUsed - giftUsed, rollover);
+      ? (b.rollover_points_used ?? 0)
+      : Math.min(pointsUsed - giftUsed, rollover);
     const baseUsed = hasRecorded
-      ? (b.base_tokens_used ?? 0)
-      : Math.min(tokensUsed - giftUsed - rolloverUsed, baseLimit);
+      ? (b.base_points_used ?? 0)
+      : Math.min(pointsUsed - giftUsed - rolloverUsed, baseLimit);
     const extraUsed = hasRecorded
-      ? (b.extra_tokens_used ?? 0)
-      : tokensUsed - giftUsed - rolloverUsed - baseUsed;
+      ? (b.extra_points_used ?? 0)
+      : pointsUsed - giftUsed - rolloverUsed - baseUsed;
     const outOfPackageUsed = giftUsed + extraUsed;
-    const outOfPackageTotal = giftTokens + extraTokens;
-    const giftRemaining = Math.max(0, giftTokens - giftUsed);
-    const purchaseRemaining = Math.max(0, extraTokens - extraUsed);
+    const outOfPackageTotal = giftPoints + extraPoints;
+    const giftRemaining = Math.max(0, giftPoints - giftUsed);
+    const purchaseRemaining = Math.max(0, extraPoints - extraUsed);
     /** 单选：仅展示选中类型的单张卡片；设置、删除仅在编辑模式显示，位置与其他组件一致（卡片右上角） */
     const selectedCard = teamCodeUsageCard;
     const cardAction =
@@ -602,7 +596,7 @@ function WidgetTeamCodeImpl({
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               key={chartKey}
-              data={dailyItems.map((d) => ({ ...d, tokens_used: Math.round(d.tokens_used ?? 0) }))}
+              data={dailyItems.map((d) => ({ ...d, points_used: Math.round(d.points_used ?? 0) }))}
               margin={{ top: 8, right: 8, bottom: 8, left: 36 }}
             >
               <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
@@ -611,13 +605,13 @@ function WidgetTeamCodeImpl({
                 content={({ active, payload }) =>
                   active && payload?.[0] ? (
                     <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
-                      <span className="text-muted-foreground">Token 用量：</span>
+                      <span className="text-muted-foreground">积点用量：</span>
                       <span className="font-medium">{formatUsage(payload[0].value as number)}</span>
                     </div>
                   ) : null
                 }
               />
-              <Line type="monotone" dataKey="tokens_used" stroke={chartColors[0]} strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="points_used" stroke={chartColors[0]} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -633,7 +627,7 @@ function WidgetTeamCodeImpl({
             <Pie
               data={byBusinessItems.map((d, i) => ({
                 name: d.business_name && String(d.business_name) !== "undefined" ? d.business_name : "(未分类)",
-                value: Math.round(d.tokens_used ?? 0),
+                value: Math.round(d.points_used ?? 0),
                 fill: chartColors[i % chartColors.length],
               }))}
               dataKey="value"
@@ -654,7 +648,7 @@ function WidgetTeamCodeImpl({
                 active && payload?.[0] ? (
                   <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow">
                     <div className="font-medium">{payload[0].name}</div>
-                    <span className="text-muted-foreground">Token 用量：</span>
+                    <span className="text-muted-foreground">积点用量：</span>
                     <span className="font-medium">{formatUsage(payload[0].value as number)}</span>
                   </div>
                 ) : null
@@ -868,33 +862,33 @@ function WidgetTeamCodeImpl({
               ) : teamUsage?.breakdown ? (
                 (() => {
                   const b = teamUsage.breakdown;
-                  const baseLimit = b.base_token_limit ?? 0;
-                  const giftTokens = b.gift_tokens ?? 0;
-                  const extraTokens = b.extra_tokens ?? 0;
-                  const rollover = b.rollover_from_prev_tokens ?? 0;
-                  const tokensUsed = b.tokens_used;
+                  const baseLimit = b.base_points_limit ?? 0;
+                  const giftPoints = b.gift_points ?? 0;
+                  const extraPoints = b.extra_points ?? 0;
+                  const rollover = b.rollover_from_prev_points ?? 0;
+                  const pointsUsed = b.points_used;
                   const hasRecorded =
-                    (b.gift_tokens_used ?? 0) +
-                    (b.rollover_tokens_used ?? 0) +
-                    (b.base_tokens_used ?? 0) +
-                    (b.extra_tokens_used ?? 0) ===
-                    tokensUsed;
+                    (b.gift_points_used ?? 0) +
+                    (b.rollover_points_used ?? 0) +
+                    (b.base_points_used ?? 0) +
+                    (b.extra_points_used ?? 0) ===
+                    pointsUsed;
                   const giftUsed = hasRecorded
-                    ? (b.gift_tokens_used ?? 0)
-                    : Math.min(tokensUsed, giftTokens);
+                    ? (b.gift_points_used ?? 0)
+                    : Math.min(pointsUsed, giftPoints);
                   const rolloverUsed = hasRecorded
-                    ? (b.rollover_tokens_used ?? 0)
-                    : Math.min(tokensUsed - giftUsed, rollover);
+                    ? (b.rollover_points_used ?? 0)
+                    : Math.min(pointsUsed - giftUsed, rollover);
                   const baseUsed = hasRecorded
-                    ? (b.base_tokens_used ?? 0)
-                    : Math.min(tokensUsed - giftUsed - rolloverUsed, baseLimit);
+                    ? (b.base_points_used ?? 0)
+                    : Math.min(pointsUsed - giftUsed - rolloverUsed, baseLimit);
                   const extraUsed = hasRecorded
-                    ? (b.extra_tokens_used ?? 0)
-                    : tokensUsed - giftUsed - rolloverUsed - baseUsed;
+                    ? (b.extra_points_used ?? 0)
+                    : pointsUsed - giftUsed - rolloverUsed - baseUsed;
                   const outOfPackageUsed = giftUsed + extraUsed;
-                  const outOfPackageTotal = giftTokens + extraTokens;
-                  const giftRemainingAlt = Math.max(0, giftTokens - giftUsed);
-                  const purchaseRemainingAlt = Math.max(0, extraTokens - extraUsed);
+                  const outOfPackageTotal = giftPoints + extraPoints;
+                  const giftRemainingAlt = Math.max(0, giftPoints - giftUsed);
+                  const purchaseRemainingAlt = Math.max(0, extraPoints - extraUsed);
                   const selectedCard = teamCodeUsageCard;
                   const showCardBorder = allowConfig;
                   const renderCard = () => {
@@ -990,16 +984,16 @@ function WidgetTeamCodeImpl({
                   {allowConfig ? (
                     <UsageStatCard
                       borderless={!allowConfig}
-                      title="Token 本月"
+                      title="积点本月"
                       value={
-                        teamUsage.token_limit != null && teamUsage.token_limit > 0
-                          ? `${teamUsage.tokens_used.toLocaleString()} / ${teamUsage.token_limit.toLocaleString()}`
-                          : teamUsage.tokens_used.toLocaleString()
+                        teamUsage.points_limit != null && teamUsage.points_limit > 0
+                          ? `${teamUsage.points_used.toLocaleString()} / ${teamUsage.points_limit.toLocaleString()}`
+                          : teamUsage.points_used.toLocaleString()
                       }
                       badge={formatYearMonth(teamUsage.year_month)}
                       contextText={
-                        teamUsage.token_limit != null && teamUsage.token_limit > 0
-                          ? `剩余 ${Math.max(0, teamUsage.token_limit - teamUsage.tokens_used).toLocaleString()}`
+                        teamUsage.points_limit != null && teamUsage.points_limit > 0
+                          ? `剩余 ${Math.max(0, teamUsage.points_limit - teamUsage.points_used).toLocaleString()}`
                           : undefined
                       }
                       valueSize={showCompact ? "compact" : "default"}
@@ -1007,16 +1001,16 @@ function WidgetTeamCodeImpl({
                   ) : (
                     <div className="flex-1 min-w-0">
                       <UsageStatCard
-                        title="Token 本月"
+                        title="积点本月"
                         value={
-                          teamUsage.token_limit != null && teamUsage.token_limit > 0
-                            ? `${teamUsage.tokens_used.toLocaleString()} / ${teamUsage.token_limit.toLocaleString()}`
-                            : teamUsage.tokens_used.toLocaleString()
+                          teamUsage.points_limit != null && teamUsage.points_limit > 0
+                            ? `${teamUsage.points_used.toLocaleString()} / ${teamUsage.points_limit.toLocaleString()}`
+                            : teamUsage.points_used.toLocaleString()
                         }
                         badge={formatYearMonth(teamUsage.year_month)}
                         contextText={
-                          teamUsage.token_limit != null && teamUsage.token_limit > 0
-                            ? `剩余 ${Math.max(0, teamUsage.token_limit - teamUsage.tokens_used).toLocaleString()}`
+                          teamUsage.points_limit != null && teamUsage.points_limit > 0
+                            ? `剩余 ${Math.max(0, teamUsage.points_limit - teamUsage.points_used).toLocaleString()}`
                             : undefined
                         }
                         valueSize={showCompact ? "compact" : "default"}
@@ -1132,7 +1126,7 @@ function WidgetTeamCodeImpl({
             <AlertDialogAction
               onClick={handleResetAuthcode}
               disabled={resetting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-destructive/90"
             >
               {resetting ? "重置中..." : "确认重置"}
             </AlertDialogAction>

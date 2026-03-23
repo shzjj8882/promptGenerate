@@ -20,6 +20,9 @@ class LLMChatTask(Base):
     result_content = Column(Text, nullable=True, comment="LLM 返回内容")
     error_message = Column(Text, nullable=True, comment="错误信息")
     team_id = Column(String(36), nullable=True, comment="团队ID")  # 不设 FK 避免迁移冲突
+    quota_refunded_at = Column(
+        DateTime(timezone=True), nullable=True, comment="配额退还时间，失败补偿时写入，多 Worker 防重"
+    )
 
     notification_type = Column(String(64), nullable=True, comment="通知类型：email 等")
     notification_config = Column(JSONB, nullable=True, comment="通知配置（如收件人 email_to）")

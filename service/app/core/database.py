@@ -1,11 +1,11 @@
+import asyncio
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
 from app.core.config import settings
 import redis.asyncio as redis
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -80,85 +80,26 @@ async def init_db():
     except Exception as e:
         logger.warning("Redis connection failed: %s", e)
 
-    # 数据库 schema 版本检查：一致则跳过建表，不一致则执行并记录版本
-    from app.core.schema_version import needs_migration, write_applied_version
+    # 数据库 schema 迁移：使用 Alembic 管理（在独立线程中执行，避免 event loop 冲突）
+    def _run_alembic_upgrade():
+        from alembic.config import Config
+        from alembic import command
+        import os
+        # alembic.ini 相对于 service 目录
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        alembic_cfg = Config(os.path.join(base_dir, "alembic.ini"))
+        alembic_cfg.set_main_option("script_location", os.path.join(base_dir, "alembic"))
+        command.upgrade(alembic_cfg, "head")
 
-    need, current, applied = needs_migration()
-    if need:
-        async with engine.begin() as conn:
-            # 在 create_all 之前执行手工迁移，确保已有表结构也能按代码演进
-            # 注意：此处仅做向前兼容的 ADD COLUMN IF NOT EXISTS，不做破坏性变更
-            try:
-                # 团队表：订阅相关字段（套餐有效期 + 每月 token 上限）
-                await conn.execute(
-                    text(
-                        """
-                        ALTER TABLE teams
-                        ADD COLUMN IF NOT EXISTS plan_expire_at TIMESTAMPTZ NULL,
-                        ADD COLUMN IF NOT EXISTS monthly_token_limit INTEGER NULL
-                        """
-                    )
-                )
-
-                # 团队月度用量表：增加调用次数字段 + 上月结转 token 字段
-                await conn.execute(
-                    text(
-                        """
-                        ALTER TABLE team_monthly_token_usage
-                        ADD COLUMN IF NOT EXISTS calls_used INTEGER NOT NULL DEFAULT 0,
-                        ADD COLUMN IF NOT EXISTS rollover_from_prev_tokens INTEGER NOT NULL DEFAULT 0
-                        """
-                    )
-                )
-
-                # 团队月度用量表：消费分项（赠送 > 结余 > 套餐 > 追加）
-                await conn.execute(
-                    text(
-                        """
-                        ALTER TABLE team_monthly_token_usage
-                        ADD COLUMN IF NOT EXISTS gift_tokens_used INTEGER NOT NULL DEFAULT 0,
-                        ADD COLUMN IF NOT EXISTS rollover_tokens_used INTEGER NOT NULL DEFAULT 0,
-                        ADD COLUMN IF NOT EXISTS base_tokens_used INTEGER NOT NULL DEFAULT 0,
-                        ADD COLUMN IF NOT EXISTS extra_tokens_used INTEGER NOT NULL DEFAULT 0
-                        """
-                    )
-                )
-
-                # 团队月度套餐表：分离合约/赠送/追加，消费优先级 赠送>节余>本月>追加
-                await conn.execute(
-                    text(
-                        """
-                        ALTER TABLE team_monthly_plans
-                        ADD COLUMN IF NOT EXISTS base_token_limit INTEGER NULL,
-                        ADD COLUMN IF NOT EXISTS gift_tokens INTEGER NULL,
-                        ADD COLUMN IF NOT EXISTS extra_tokens INTEGER NULL
-                        """
-                    )
-                )
-
-                # 团队用量日志表：业务名称
-                await conn.execute(
-                    text(
-                        """
-                        ALTER TABLE team_usage_logs
-                        ADD COLUMN IF NOT EXISTS business_name VARCHAR NULL
-                        """
-                    )
-                )
-            except Exception as e:
-                # 记录日志但不中断后续建表，避免影响首次初始化
-                logger.warning("Run manual schema migrations failed: %s", e)
-
-            # create_all 负责创建缺失的表/索引
-            await conn.run_sync(Base.metadata.create_all)
-
-        write_applied_version(current)
-        logger.info("Database schema updated, version: %s", current)
-    else:
-        logger.info("Database schema up to date, version: %s", current)
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _run_alembic_upgrade)
+        logger.info("Alembic migrations applied successfully")
+    except Exception as e:
+        logger.warning("Alembic migration failed (may already be up to date): %s", e)
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """获取数据库会话"""
     async with AsyncSessionLocal() as session:
         try:
@@ -166,8 +107,6 @@ async def get_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
 
 
 async def get_redis() -> redis.Redis:

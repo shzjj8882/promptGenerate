@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { TableColumnFormField } from "@/components/shared/table-column-form-field";
 import { Copy, Check } from "@/components/icons";
 import { buildCurlCommandForApi, getCurlBaseUrl } from "@/lib/utils/curl";
@@ -37,7 +38,7 @@ export function RowRecordDialog({
   onSubmit,
 }: RowRecordDialogProps) {
   const [formValues, setFormValues] = useState<Record<string, string>>({});
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  const { copied: copiedCurl, copy } = useCopyToClipboard({ resetDelay: 2000 });
   const [submitting, setSubmitting] = useState(false);
   const columns = table?.columns || [];
 
@@ -106,14 +107,8 @@ export function RowRecordDialog({
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(curlCommand);
-      setCopiedCurl(true);
-      setTimeout(() => setCopiedCurl(false), 2000);
-    } catch {
-      // ignore
-    }
-  }, [table?.code, mode, row?.id, formValues]);
+    copy(curlCommand);
+  }, [table?.code, mode, row?.id, formValues, copy]);
 
   const title =
     mode === "add" ? "添加记录" : mode === "edit" ? "修改记录" : "删除记录";

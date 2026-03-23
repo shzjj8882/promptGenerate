@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { queryTableRowsByConditions } from "@/lib/api/multi-dimension-tables";
 import { buildCurlCommandForApi, getCurlBaseUrl } from "@/lib/utils/curl";
 import { userStore } from "@/store/user-store";
@@ -28,7 +29,7 @@ export function useRowQuery({ table, open }: UseRowQueryOptions) {
   const [result, setResult] = useState<{ rows: TableRow[]; total: number } | null>(
     null
   );
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  const { copied: copiedCurl, copy } = useCopyToClipboard({ resetDelay: 2000 });
 
   const columns = table?.columns ?? [];
   const conditionOptions = [
@@ -118,17 +119,10 @@ export function useRowQuery({ table, open }: UseRowQueryOptions) {
     });
   }, [table?.code]);
 
-  const handleCopyCurl = useCallback(async () => {
+  const handleCopyCurl = useCallback(() => {
     const cmd = getCurlCommand();
-    if (!cmd) return;
-    try {
-      await navigator.clipboard.writeText(cmd);
-      setCopiedCurl(true);
-      setTimeout(() => setCopiedCurl(false), 2000);
-    } catch {
-      // ignore
-    }
-  }, [getCurlCommand]);
+    if (cmd) copy(cmd);
+  }, [getCurlCommand, copy]);
 
   return {
     conditions,

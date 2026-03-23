@@ -38,3 +38,25 @@ async def log_team_usage(
         extra_info=extra_info,
     )
     db.add(log)
+
+
+async def log_team_usage_refund(
+    db: AsyncSession,
+    team_id: str,
+    amount: int = 1,
+    business_name: str | None = None,
+    extra_info: str | None = None,
+) -> None:
+    """
+    记录用量退还（失败补偿）。与预扣时的 log 对应，保证历史用量与配额一致。
+    tokens_used=-amount，聚合时与消费记录相抵。
+    """
+    await log_team_usage(
+        db=db,
+        team_id=team_id,
+        usage_type=5,
+        tokens_used=-amount,
+        calls_count=-1,
+        extra_info=extra_info,
+        business_name=business_name,
+    )

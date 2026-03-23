@@ -5,7 +5,16 @@ LLM服务 - 集成DeepSeek API（HTTP 客户端复用优化）
 import httpx
 import json
 from typing import Optional, Dict, Any, AsyncIterator, List
+
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
 from app.core.config import settings
+
+_HTTP_RETRY = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+)
 
 
 def mcp_tools_to_openai_format(mcp_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -79,6 +88,7 @@ class LLMService:
             await cls._stream_client.aclose()
             cls._stream_client = None
     
+    @_HTTP_RETRY
     async def chat(
         self,
         messages: list,
@@ -119,6 +129,7 @@ class LLMService:
         response.raise_for_status()
         return response.json()
 
+    @_HTTP_RETRY
     async def chat_with_tools(
         self,
         messages: list,

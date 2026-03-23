@@ -232,7 +232,7 @@ function MenuManagementClientImpl(props: MenuManagementClientProps) {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className={TYPOGRAPHY.pageTitle}>菜单管理</h2>
+          <h2 className={TYPOGRAPHY.pageTitle}>路由管理</h2>
           <p className={cn(TYPOGRAPHY.pageSubtitle, "mt-1")}>
             配置菜单的父子关系和排序顺序
           </p>

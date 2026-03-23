@@ -1,6 +1,8 @@
 """
 用户工作台布局配置服务
 """
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,15 +73,15 @@ async def get_config_cached(db: AsyncSession, user_id: str):
         try:
             layout = json_loads(cached)
             return SimpleNamespace(layout=layout or [])
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning("工作台配置缓存反序列化失败: %s", e)
 
     cfg = await get_or_create_config(db, user_id)
     layout = cfg.layout or []
     try:
         await set_cache(cache_key, json_dumps(layout), CACHE_TTL["dashboard_config"])
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).warning("工作台配置缓存写入失败: %s", e)
     return cfg
 
 
@@ -92,15 +94,15 @@ async def get_system_config_cached(db: AsyncSession):
         try:
             layout = json_loads(cached)
             return SimpleNamespace(layout=layout or [])
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning("系统工作台配置缓存反序列化失败: %s", e)
 
     cfg = await get_or_create_system_config(db)
     layout = cfg.layout or []
     try:
         await set_cache(SYSTEM_CONFIG_CACHE_KEY, json_dumps(layout), CACHE_TTL["dashboard_config"])
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).warning("系统工作台配置缓存写入失败: %s", e)
     return cfg
 
 

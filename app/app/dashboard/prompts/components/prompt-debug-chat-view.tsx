@@ -1,8 +1,5 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { Bot } from "@/components/icons";
 
 export interface ChatMessage {
@@ -55,13 +52,8 @@ export function PromptDebugChatView({
                   }`}
                 >
                   {msg.role === "assistant" ? (
-                    <div className="markdown-content">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        rehypePlugins={[rehypeHighlight]}
-                      >
-                        {msg.content}
-                      </ReactMarkdown>
+                    <div className="text-sm whitespace-pre-wrap leading-relaxed">
+                      {msg.content}
                     </div>
                   ) : (
                     <div className="text-sm whitespace-pre-wrap leading-relaxed">

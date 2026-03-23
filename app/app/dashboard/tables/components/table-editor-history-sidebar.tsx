@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { RotateCcw, Clock, Rows3, LayoutGrid } from "@/components/icons";
+import { RotateCcw } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import type { HistoryState, CompletedHistoryEntry } from "../table-editor-types";
 import type { HistoryStepType } from "../table-editor-types";

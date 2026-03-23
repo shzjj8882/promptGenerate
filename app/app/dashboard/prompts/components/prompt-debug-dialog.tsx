@@ -1,68 +1,35 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { Send, ChevronLeft, ChevronRight, Copy, Check, HelpCircle, Globe, Play, ChevronDown, ChevronUp } from "@/components/icons";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Send, ChevronLeft, ChevronRight, Copy, Check, Communication, Api } from "@/components/icons";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { FieldHelp } from "@/components/ui/field-help";
-import { ApiFieldLabel } from "@/components/shared/api-field-label";
-import { ObjectFieldSection } from "@/components/shared/object-field-section";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { usePromptDebug } from "../hooks/use-prompt-debug";
 import {
   parsePlaceholdersFromText,
   parsePlaceholderDetails,
   checkIfTenantRequired,
-  isAutoFetchedPlaceholder,
   getSceneLabel,
 } from "../utils/prompt-utils";
-import type { Prompt, Placeholder, PromptScene } from "../prompts-client";
+import type { Prompt, Placeholder } from "../prompts-client";
 import type { LLMConfig } from "@/lib/api/llmchat";
-import { API_BASE_URL, getAuthToken } from "@/lib/api/config";
+import { API_BASE_URL } from "@/lib/api/config";
 import { logger } from "@/lib/utils/logger";
-import { PlaceholderParamsPanel } from "./placeholders";
 import { usePlaceholderTables } from "../hooks/use-placeholder-tables";
 import { cn } from "@/lib/utils";
 import { userStore } from "@/store/user-store";
 import { getLLMModels, type LLMModel } from "@/lib/api/llm-models";
-import { ModelLogo } from "@/components/shared/model-logo";
 import { getMCPConfigsForDebug, type MCPConfig } from "@/lib/api/mcp";
 import { getNotificationConfigsForDebug } from "@/lib/api/notification-config";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-  NotificationOptionPicker,
   type NotificationOption,
   toEmailContentType,
 } from "@/app/dashboard/compositions/components/notification-option-picker";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { PromptDebugChatView } from "./prompt-debug-chat-view";
+import { PromptDebugApiView } from "./prompt-debug-api-view";
+import { PromptDebugParamsPanel } from "./prompt-debug-params-panel";
 
 interface PromptDebugDialogProps {
   open: boolean;
@@ -124,7 +91,7 @@ export function PromptDebugDialog({
   const [debugPlaceholderParams, setDebugPlaceholderParams] = useState<Record<string, unknown>>({});
   const [debugMode, setDebugMode] = useState<"chat" | "api">("chat");
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  const { copied: copiedCurl, copy, resetCopied } = useCopyToClipboard({ resetDelay: 2000 });
   const { tableInfoMap, loadingTables } = usePlaceholderTables(placeholders, !!open && !!prompt);
   // 跟踪哪个占位符的筛选弹出框是打开的
   const [openFilterPopover, setOpenFilterPopover] = useState<string | null>(null);
@@ -339,14 +306,8 @@ export function PromptDebugDialog({
   ${authHeader} \\
   -d '${JSON.stringify(requestBody, null, 2)}'`;
 
-    try {
-      await navigator.clipboard.writeText(curlCommand);
-      setCopiedCurl(true);
-      setTimeout(() => setCopiedCurl(false), 2000);
-    } catch (error) {
-      logger.error("复制失败", error);
-    }
-  }, [prompt, apiUrl, compositionId, compositionPromptId, editableTenantId, compositionTenantId, debugMode, debugTenantCode, debugPlaceholderParams, debugLLMConfig, input, selectedModelId, selectedMcpId, selectedMcpToolNames, notificationOption, notificationEmailTo]);
+    await copy(curlCommand);
+  }, [prompt, apiUrl, compositionId, compositionPromptId, editableTenantId, compositionTenantId, debugMode, debugTenantCode, debugPlaceholderParams, debugLLMConfig, input, selectedModelId, selectedMcpId, selectedMcpToolNames, notificationOption, notificationEmailTo, copy]);
 
   // 重置状态
   const handleOpenChange = useCallback((newOpen: boolean) => {
@@ -358,7 +319,7 @@ export function PromptDebugDialog({
       setDebugPlaceholderParams({});
       setDebugMode("chat");
       setIsRightPanelCollapsed(false);
-      setCopiedCurl(false);
+      resetCopied();
       setOpenFilterPopover(null);
       setSelectedMcpId("__none__");
       setSelectedMcpToolNames(new Set());
@@ -372,7 +333,7 @@ export function PromptDebugDialog({
       setResponseText("");
     }
     onOpenChange(newOpen);
-  }, [reset, onOpenChange]);
+  }, [reset, onOpenChange, resetCopied]);
 
   // 响应区：API 返回时同步到 responseText，便于粘贴对比
   useEffect(() => {
@@ -440,7 +401,11 @@ export function PromptDebugDialog({
           <DialogTitle className="text-lg flex items-center gap-2">
             {previewMode ? (
               <>
-                <Globe className="w-5 h-5 text-muted-foreground" />
+                {debugMode === "chat" ? (
+                  <Communication className="w-5 h-5 text-muted-foreground" />
+                ) : (
+                  <Api className="w-5 h-5 text-muted-foreground" />
+                )}
                 {compositionName || "组合"}
               </>
             ) : (
@@ -492,385 +457,60 @@ export function PromptDebugDialog({
                 </div>
               </>
             ) : (
-              <>
-                {/* 接口模式：Postman 风格，参考图布局 */}
-                <div className="flex-1 flex flex-col overflow-hidden bg-background">
-                  {/* 顶部：方法 + URL + 发送 */}
-                  <div className="border-b px-4 py-3 flex items-center gap-2 bg-muted/20">
-                    <Badge variant="secondary" className="font-mono text-xs shrink-0 bg-emerald-500/20 text-emerald-700 dark:bg-emerald-500/30 dark:text-emerald-400 border-emerald-500/30">
-                      POST
-                    </Badge>
-                    <Input
-                      value={apiUrl}
-                      readOnly
-                      disabled={previewMode}
-                      className="flex-1 h-9 text-sm font-mono bg-muted/50 border-muted-foreground/20 cursor-not-allowed"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={sendMessage}
-                      disabled={!input.trim() || streaming || !selectedModelId}
-                      className="shrink-0 bg-primary hover:bg-primary/90"
-                      title={!selectedModelId ? "请先选择模型" : undefined}
-                    >
-                      <Send className="h-4 w-4 mr-1.5" />
-                      发送
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCopyCurl}
-                      disabled={!prompt || streaming}
-                      className="shrink-0"
-                    >
-                      {copiedCurl ? <Check className="h-4 w-4 mr-1" /> : <Copy className="h-4 w-4 mr-1" />}
-                      {copiedCurl ? "已复制" : "CURL"}
-                    </Button>
-                  </div>
-                  {/* Tab 栏 */}
-                  <div className="flex border-b bg-muted/10">
-                    {(["params", "body", "headers"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setRequestTab(tab)}
-                        className={cn(
-                          "px-4 py-2.5 text-sm font-medium transition-colors",
-                          requestTab === tab
-                            ? "text-primary border-b-2 border-primary bg-background"
-                            : "text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        {tab === "params" && "Query 参数 / Path 参数"}
-                        {tab === "body" && "Body（JSON）"}
-                        {tab === "headers" && "请求头"}
-                      </button>
-                    ))}
-                  </div>
-                  {/* Tab 内容 + 响应：Tab 内容可滚动，响应固定底部不随 Tab 切换 */}
-                  <div className="flex-1 flex flex-col min-h-0 gap-0">
-                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar min-h-0">
-                    {requestTab === "params" && (
-                      <div className="space-y-3">
-                        {compositionId && compositionPromptId ? (
-                          <div className="rounded border overflow-hidden">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="border-b bg-muted/30">
-                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">参数名</th>
-                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">参数值</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr className="border-b">
-                                  <td className="px-3 py-2 font-mono text-xs">compositionId</td>
-                                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground truncate">{compositionId}</td>
-                                </tr>
-                                <tr className="border-b">
-                                  <td className="px-3 py-2 font-mono text-xs">tenantId</td>
-                                  <td className="px-3 py-2">
-                                    <Select
-                                      value={editableTenantId || "default"}
-                                      onValueChange={setEditableTenantId}
-                                      disabled={streaming}
-                                    >
-                                      <SelectTrigger className="h-8 text-xs font-mono w-full">
-                                        <SelectValue placeholder="选择租户" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="default">默认</SelectItem>
-                                        {tenants.map((t) => (
-                                          <SelectItem key={t.id} value={t.id}>
-                                            {t.name || t.code_id}
-                                          </SelectItem>
-                                        ))}
-                                        {compositionTenantId && compositionTenantId !== "default" && !tenants.some((t) => t.id === compositionTenantId) && (
-                                          <SelectItem value={compositionTenantId}>
-                                            {compositionTenantId}
-                                          </SelectItem>
-                                        )}
-                                      </SelectContent>
-                                    </Select>
-                                  </td>
-                                </tr>
-                                <tr className="border-b last:border-0">
-                                  <td className="px-3 py-2 font-mono text-xs">promptId</td>
-                                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground truncate">{compositionPromptId}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-muted-foreground py-4">本接口无 Query 参数</p>
-                        )}
-                      </div>
-                    )}
-                    {requestTab === "headers" && (
-                      <div className="space-y-3">
-                        <div className="rounded border overflow-hidden">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b bg-muted/30">
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">参数名</th>
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">参数值</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr className="border-b last:border-0">
-                                <td className="px-3 py-2 font-mono text-xs">Content-Type</td>
-                                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">application/json</td>
-                              </tr>
-                              <tr className="border-b last:border-0">
-                                <td className="px-3 py-2 font-mono text-xs">X-Team-AuthCode</td>
-                                <td className="px-3 py-2 font-mono text-xs text-muted-foreground truncate" title={userStore.user?.team_authcode ?? ""}>
-                                  {userStore.user?.team_authcode ? "***" : "（未设置）"}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                    {requestTab === "body" && (
-                        <div className="space-y-5">
-                            {/* 请求参数 */}
-                            <div className="border rounded-lg p-4 space-y-4 bg-card shadow-sm">
-                              <div className="flex items-center gap-2">
-                                <div className="w-1 h-4 bg-primary rounded-full" />
-                                <h3 className="font-semibold text-sm font-mono">请求参数</h3>
-                                <FieldHelp content="必填与可选参数。" />
-                              </div>
-                              <div className="pl-4 border-l-2 border-muted-foreground/30 space-y-4">
-                            <div className="space-y-1.5">
-                              <ApiFieldLabel keyName="user_message" help="用户消息内容，必填。将作为提示词中的用户输入部分。" typeBadge="string" required htmlFor="api-user-message" />
-                              <Textarea
-                                id="api-user-message"
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                placeholder="用户消息内容"
-                                className="min-h-[72px] text-sm resize-none font-mono"
-                                disabled={streaming}
-                              />
-                            </div>
-                            {!compositionId && needsTenant && (
-                              <div className="space-y-1.5">
-                                <ApiFieldLabel keyName="tenantCode" help="租户编号，可选。用于多租户场景下的租户隔离。" typeBadge="string" optional htmlFor="api-tenant" />
-                                <Input
-                                  id="api-tenant"
-                                  value={debugTenantCode}
-                                  onChange={(e) => setDebugTenantCode(e.target.value)}
-                                  placeholder="租户编号"
-                                  className="h-9 text-sm font-mono"
-                                  disabled={streaming}
-                                />
-                              </div>
-                            )}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div className="space-y-1.5">
-                                <ApiFieldLabel keyName="model_id" help="LLM 模型 ID，必填。将作为提示词调用的语言模型。" typeBadge="string" required htmlFor="api-model" />
-                                <Select
-                                  value={selectedModelId}
-                                  onValueChange={setSelectedModelId}
-                                  disabled={streaming || loadingModels || compositionConfigReadOnly}
-                                >
-                                  <SelectTrigger id="api-model" className="h-9 text-sm w-full">
-                                    <SelectValue placeholder={loadingModels ? "加载中..." : "请选择模型"} />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {models.map((m) => (
-                                      <SelectItem key={m.id} value={m.id}>
-                                        <ModelLogo provider={m.provider} model={m.model} name={m.name} size={20} showName />
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="space-y-1.5">
-                                <ApiFieldLabel keyName="mcp_id" help="MCP 配置 ID，可选。用于启用 MCP 工具调用。" typeBadge="string" optional htmlFor="api-mcp" />
-                                <Select
-                                  value={selectedMcpId}
-                                  onValueChange={(id) => {
-                                    setSelectedMcpId(id);
-                                    const mcp = id && id !== "__none__" ? mcpConfigs.find((c) => c.id === id) : null;
-                                    if (mcp?.tools_cache?.length) {
-                                      setSelectedMcpToolNames(new Set(mcp.tools_cache.map((t) => t.name)));
-                                    } else {
-                                      setSelectedMcpToolNames(new Set());
-                                    }
-                                  }}
-                                  disabled={streaming || loadingMcps || compositionConfigReadOnly}
-                                >
-                                  <SelectTrigger id="api-mcp" className="h-9 text-sm w-full">
-                                    <SelectValue placeholder={loadingMcps ? "加载中..." : "不选择"} />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="__none__">不选择</SelectItem>
-                                    {mcpConfigs.map((mcp) => (
-                                      <SelectItem key={mcp.id} value={mcp.id}>
-                                        {mcp.id}
-                                        {mcp.tools_cache?.length ? ` (${mcp.tools_cache.length} 个工具)` : ""}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            </div>
-                          {selectedMcpId && selectedMcpId !== "__none__" && (
-                            <div className="space-y-3">
-                              <ApiFieldLabel keyName="mcp_tool_names" help="MCP 工具名称列表。可多选要启用的工具。" typeBadge="string[]" />
-                              <div className="max-h-24 overflow-y-auto space-y-2 rounded border p-3 custom-scrollbar">
-                                {mcpConfigs.find((c) => c.id === selectedMcpId)?.tools_cache?.map((tool) => (
-                                  <div key={tool.name} className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`api-mcp-tool-${tool.name}`}
-                                      checked={selectedMcpToolNames.has(tool.name)}
-                                      onCheckedChange={(checked) => {
-                                        setSelectedMcpToolNames((prev) => {
-                                          const next = new Set(prev);
-                                          if (checked) next.add(tool.name);
-                                          else next.delete(tool.name);
-                                          return next;
-                                        });
-                                      }}
-                                      disabled={streaming || compositionConfigReadOnly}
-                                    />
-                                    <label htmlFor={`api-mcp-tool-${tool.name}`} className="text-sm cursor-pointer">{tool.title || tool.name}</label>
-                                  </div>
-                                )) ?? (
-                                  <div className="text-sm text-muted-foreground">该 MCP 暂无工具</div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                              </div>
-                            </div>
-                          <ObjectFieldSection title="llm_config" help="LLM 模型参数。temperature 控制随机性；max_tokens 限制最大输出长度。" grid>
-                                <div className="space-y-1.5">
-                                  <ApiFieldLabel keyName="temperature" typeBadge="number" nested htmlFor="api-llm-temp" />
-                                  <Input
-                                    id="api-llm-temp"
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="2"
-                                    value={debugLLMConfig.temperature ?? 0.3}
-                                    onChange={(e) => setDebugLLMConfig({ ...debugLLMConfig, temperature: parseFloat(e.target.value) || 0.3 })}
-                                    className="h-9 text-sm font-mono"
-                                    disabled={streaming}
-                                  />
-                                </div>
-                                <div className="space-y-1.5">
-                                  <ApiFieldLabel keyName="max_tokens" typeBadge="number" nested htmlFor="api-llm-tokens" />
-                                  <Input
-                                    id="api-llm-tokens"
-                                    type="number"
-                                    min="1"
-                                    value={debugLLMConfig.max_tokens ?? ""}
-                                    onChange={(e) => setDebugLLMConfig({ ...debugLLMConfig, max_tokens: e.target.value ? parseInt(e.target.value) : undefined })}
-                                    placeholder="留空不限制"
-                                    className="h-9 text-sm font-mono"
-                                    disabled={streaming}
-                                  />
-                                </div>
-                          </ObjectFieldSection>
-                          <ObjectFieldSection title="additional_params" help="占位符参数。根据提示词中的占位符动态生成，用于替换提示词中的变量。" grid>
-                            {(inputPlaceholders.length > 0 || tablePlaceholders.length > 0) ? (
-                              <PlaceholderParamsPanel
-                                variant="api"
-                                needsTenant={!compositionId && needsTenant}
-                                tenantValue={debugTenantCode}
-                                onTenantChange={setDebugTenantCode}
-                                inputPlaceholders={inputPlaceholders}
-                                tablePlaceholders={tablePlaceholders}
-                                params={debugPlaceholderParams}
-                                onParamsChange={setDebugPlaceholderParams}
-                                tableInfoMap={tableInfoMap}
-                                loadingTables={loadingTables}
-                                openFilterPopover={openFilterPopover}
-                                onOpenFilterPopoverChange={setOpenFilterPopover}
-                                disabled={streaming}
-                                idPrefix="api-param"
-                                asGridItems
-                              />
-                            ) : (
-                              <div className="sm:col-span-2">
-                                <pre className="text-xs font-mono bg-muted/50 rounded p-3">{JSON.stringify(debugPlaceholderParams, null, 2) || "{}"}</pre>
-                              </div>
-                            )}
-                          </ObjectFieldSection>
-                          <ObjectFieldSection title="notification" help="通知配置。异步任务完成后可选择邮件等方式通知。" grid>
-                                <div className="space-y-1.5">
-                                  <ApiFieldLabel keyName="type" typeBadge="string" nested badgeVariant="outline" />
-                                  <NotificationOptionPicker
-                                    value={notificationOption}
-                                    onChange={(v) => { setNotificationOption(v); if (v === "none") setNotificationEmailTo(""); }}
-                                    hasEmailConfig={effectiveHasEmailConfig}
-                                    disabled={streaming || loadingNotificationConfigs || compositionConfigReadOnly}
-                                  />
-                                </div>
-                                {notificationOption !== "none" && (
-                                  <>
-                                    <div className="space-y-1.5">
-                                      <ApiFieldLabel keyName="email_to" typeBadge="string" nested badgeVariant="outline" htmlFor="api-notification-email" />
-                                      <Input
-                                        id="api-notification-email"
-                                        type="email"
-                                        placeholder="收件人邮箱"
-                                        value={notificationEmailTo}
-                                        onChange={(e) => setNotificationEmailTo(e.target.value)}
-                                        className="h-9 text-sm font-mono"
-                                        disabled={streaming}
-                                      />
-                                    </div>
-                                    <div className="space-y-1.5">
-                                      <ApiFieldLabel keyName="email_content_type" typeBadge="string" nested badgeVariant="outline" />
-                                      <Select
-                                        value={toEmailContentType(notificationOption) ?? "html"}
-                                        onValueChange={(v) => setNotificationOption(`email:${v}` as NotificationOption)}
-                                        disabled={streaming || compositionConfigReadOnly}
-                                      >
-                                        <SelectTrigger className="h-9 text-sm font-mono w-full">
-                                          <SelectValue placeholder="选择格式" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="html">html</SelectItem>
-                                          <SelectItem value="plain">plain</SelectItem>
-                                          <SelectItem value="file">file</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                  </>
-                                )}
-                          </ObjectFieldSection>
-                        </div>
-                    )}
-                    </div>
-                    {/* 响应区：可粘贴编辑，便于调试对比 */}
-                    <div className="shrink-0 border-t p-4 bg-muted/5">
-                      <Label className="text-sm font-medium">响应</Label>
-                      <div className="mt-2 relative">
-                        {streaming && (
-                          <div className="absolute top-2 right-2 flex items-center gap-2 text-muted-foreground z-10">
-                            <div className="flex gap-1">
-                              <div className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                              <div className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                              <div className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                            </div>
-                            <span className="text-xs">请求中...</span>
-                          </div>
-                        )}
-                        <Textarea
-                          value={responseText}
-                          onChange={(e) => setResponseText(e.target.value)}
-                          placeholder="发送请求后在此显示响应，或粘贴 JSON 进行对比调试"
-                          className="min-h-[120px] max-h-[240px] text-xs font-mono resize-none bg-muted/30 border rounded-lg p-4 pr-24"
-                          readOnly={streaming}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </>
+              <PromptDebugApiView
+                apiUrl={apiUrl}
+                prompt={prompt}
+                streaming={streaming}
+                previewMode={previewMode}
+                input={input}
+                onInputChange={setInput}
+                onSend={sendMessage}
+                onCopyCurl={handleCopyCurl}
+                copiedCurl={copiedCurl}
+                selectedModelId={selectedModelId}
+                onSelectedModelIdChange={setSelectedModelId}
+                requestTab={requestTab}
+                onRequestTabChange={setRequestTab}
+                responseText={responseText}
+                onResponseTextChange={setResponseText}
+                compositionId={compositionId}
+                compositionPromptId={compositionPromptId}
+                editableTenantId={editableTenantId}
+                onEditableTenantIdChange={setEditableTenantId}
+                tenants={tenants}
+                compositionTenantId={compositionTenantId}
+                needsTenant={needsTenant}
+                debugTenantCode={debugTenantCode}
+                onDebugTenantCodeChange={setDebugTenantCode}
+                debugLLMConfig={debugLLMConfig}
+                onDebugLLMConfigChange={setDebugLLMConfig}
+                models={models}
+                loadingModels={loadingModels}
+                compositionConfigReadOnly={compositionConfigReadOnly}
+                mcpConfigs={mcpConfigs}
+                loadingMcps={loadingMcps}
+                selectedMcpId={selectedMcpId}
+                onSelectedMcpIdChange={setSelectedMcpId}
+                selectedMcpToolNames={selectedMcpToolNames}
+                onSelectedMcpToolNamesChange={setSelectedMcpToolNames}
+                inputPlaceholders={inputPlaceholders}
+                tablePlaceholders={tablePlaceholders}
+                debugPlaceholderParams={debugPlaceholderParams}
+                onDebugPlaceholderParamsChange={setDebugPlaceholderParams}
+                tableInfoMap={tableInfoMap}
+                loadingTables={loadingTables}
+                openFilterPopover={openFilterPopover}
+                onOpenFilterPopoverChange={setOpenFilterPopover}
+                notificationOption={notificationOption}
+                onNotificationOptionChange={(v) => {
+                  setNotificationOption(v);
+                  if (v === "none") setNotificationEmailTo("");
+                }}
+                notificationEmailTo={notificationEmailTo}
+                onNotificationEmailToChange={setNotificationEmailTo}
+                effectiveHasEmailConfig={effectiveHasEmailConfig}
+                loadingNotificationConfigs={loadingNotificationConfigs}
+              />
             )}
           </div>
 
@@ -897,298 +537,47 @@ export function PromptDebugDialog({
 
           {/* 右侧：配置区域（仅聊天模式，接口模式参数均在 Body 中） */}
           {debugMode === "chat" && (
-          <div className={`flex flex-col gap-4 overflow-y-auto pr-1 transition-all duration-300 custom-scrollbar ${
-            isRightPanelCollapsed ? "w-0 opacity-0 overflow-hidden" : "w-80 opacity-100"
-          }`}>
-            {/* 调试配置（预览模式下不展示） */}
-            {!previewMode && (
-            <div className="border rounded-lg p-4 space-y-4 bg-card shadow-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full" />
-                <h3 className="font-semibold text-sm">调试配置</h3>
-                {configReadOnly && (
-                  <Badge variant="outline" className="text-xs text-muted-foreground">配置只读，参数可调</Badge>
-                )}
-              </div>
-              <div className="space-y-3">
-                {!previewMode && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="debug-mode" className="text-sm cursor-pointer">
-                      调试模式
-                    </Label>
-                    {isMounted && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="text-muted-foreground hover:text-foreground transition-colors"
-                              disabled={streaming}
-                            >
-                              <HelpCircle className="w-4 h-4" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            <div className="space-y-2 text-sm">
-                              <div>
-                                <strong>聊天模式：</strong>使用 SSE 流式响应，实时显示 AI 回复
-                              </div>
-                              <div>
-                                <strong>接口模式：</strong>使用 HTTP 请求，等待完整回复后一次性显示
-                              </div>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={debugMode === "chat" ? "default" : "secondary"} className="text-xs">
-                      {debugMode === "chat" ? "聊天模式" : "接口模式"}
-                    </Badge>
-                    <Switch
-                      id="debug-mode"
-                      checked={debugMode === "chat"}
-                      onCheckedChange={(checked) => setDebugMode(checked ? "chat" : "api")}
-                      disabled={streaming || configReadOnly}
-                    />
-                  </div>
-                </div>
-                )}
-                {!previewMode && (
-                  <div className="pt-2 border-t">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={handleCopyCurl}
-                      disabled={!prompt || streaming}
-                    >
-                      {copiedCurl ? (
-                        <>
-                          <Check className="w-4 h-4 mr-2" />
-                          已复制
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-4 h-4 mr-2" />
-                          复制 CURL 命令
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
-              </div>
+            <div
+              className={`flex flex-col gap-4 transition-all duration-300 ${
+                isRightPanelCollapsed ? "w-0 opacity-0 overflow-hidden" : "w-80 opacity-100"
+              }`}
+            >
+              <PromptDebugParamsPanel
+                configReadOnly={configReadOnly}
+                debugMode={debugMode}
+                onDebugModeChange={setDebugMode}
+                streaming={streaming}
+                prompt={prompt}
+                onCopyCurl={handleCopyCurl}
+                copiedCurl={copiedCurl}
+                isMounted={isMounted}
+                previewMode={previewMode}
+                debugLLMConfig={debugLLMConfig}
+                onDebugLLMConfigChange={setDebugLLMConfig}
+                debugParamsEditable={debugParamsEditable}
+                selectedModelId={selectedModelId}
+                onSelectedModelIdChange={setSelectedModelId}
+                models={models}
+                loadingModels={loadingModels}
+                mcpConfigs={mcpConfigs}
+                loadingMcps={loadingMcps}
+                selectedMcpId={selectedMcpId}
+                onSelectedMcpIdChange={setSelectedMcpId}
+                selectedMcpToolNames={selectedMcpToolNames}
+                onSelectedMcpToolNamesChange={setSelectedMcpToolNames}
+                needsTenant={needsTenant}
+                debugTenantCode={debugTenantCode}
+                onDebugTenantCodeChange={setDebugTenantCode}
+                inputPlaceholders={inputPlaceholders}
+                tablePlaceholders={tablePlaceholders}
+                debugPlaceholderParams={debugPlaceholderParams}
+                onDebugPlaceholderParamsChange={setDebugPlaceholderParams}
+                tableInfoMap={tableInfoMap}
+                loadingTables={loadingTables}
+                openFilterPopover={openFilterPopover}
+                onOpenFilterPopoverChange={setOpenFilterPopover}
+              />
             </div>
-            )}
-
-            {/* LLM 配置 */}
-            <div className="border rounded-lg p-4 space-y-4 bg-card shadow-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full" />
-                <h3 className="font-semibold text-sm font-mono">llm_config</h3>
-                <FieldHelp content="LLM 模型参数配置。" />
-                <Badge variant="secondary" className="text-xs">object</Badge>
-              </div>
-              <div className="pl-4 border-l-2 border-muted-foreground/30 space-y-3">
-                <div className="space-y-2">
-                  <ApiFieldLabel keyName="model_id" help="LLM 模型 ID，必填。" typeBadge="string" nested badgeVariant="outline" required htmlFor="debug-model" />
-                  <Select
-                    value={selectedModelId}
-                    onValueChange={setSelectedModelId}
-                    disabled={streaming || loadingModels || configReadOnly}
-                    required
-                  >
-                    <SelectTrigger id="debug-model" className="w-full">
-                      <SelectValue placeholder={loadingModels ? "加载中..." : "请选择模型"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {models.length === 0 ? (
-                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                          {loadingModels ? "加载中..." : "暂无可用模型"}
-                        </div>
-                      ) : (
-                        models.map((model) => (
-                          <SelectItem key={model.id} value={model.id}>
-                            <ModelLogo
-                              provider={model.provider}
-                              model={model.model}
-                              name={`${model.name ?? model.model ?? model.id}${model.is_default ? " [默认]" : ""}`}
-                              size={20}
-                              showName
-                            />
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <ApiFieldLabel keyName="temperature" help="控制输出随机性，0-2，越小越确定。" typeBadge="number" nested badgeVariant="outline" htmlFor="debug-temperature" />
-                  <Input
-                    id="debug-temperature"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="2"
-                    value={debugLLMConfig.temperature ?? 0.3}
-                    onChange={(e) =>
-                      setDebugLLMConfig({
-                        ...debugLLMConfig,
-                        temperature: parseFloat(e.target.value) || 0.3,
-                      })
-                    }
-                    disabled={!debugParamsEditable}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <ApiFieldLabel keyName="max_tokens" help="限制模型最大输出 token 数，可选。留空则不限制。" typeBadge="number" nested badgeVariant="outline" htmlFor="debug-max-tokens" />
-                  <Input
-                    id="debug-max-tokens"
-                    type="number"
-                    min="1"
-                    value={debugLLMConfig.max_tokens ?? ""}
-                    onChange={(e) =>
-                      setDebugLLMConfig({
-                        ...debugLLMConfig,
-                        max_tokens: e.target.value ? parseInt(e.target.value) : undefined,
-                      })
-                    }
-                    placeholder="留空则不限制"
-                    disabled={!debugParamsEditable}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* MCP 配置（预览模式下不展示） */}
-            {!previewMode && (
-            <div className="border rounded-lg p-4 space-y-4 bg-card shadow-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full" />
-                <h3 className="font-semibold text-sm">MCP 服务</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="debug-mcp">选择 MCP 服务</Label>
-                  <Select
-                    value={selectedMcpId}
-                    onValueChange={(id) => {
-                      setSelectedMcpId(id);
-                      const mcp = id && id !== "__none__" ? mcpConfigs.find((c) => c.id === id) : null;
-                      if (mcp?.tools_cache?.length) {
-                        setSelectedMcpToolNames(new Set(mcp.tools_cache.map((t) => t.name)));
-                      } else {
-                        setSelectedMcpToolNames(new Set());
-                      }
-                    }}
-                    disabled={streaming || loadingMcps || configReadOnly}
-                  >
-                    <SelectTrigger id="debug-mcp" className="w-full">
-                      <SelectValue placeholder={loadingMcps ? "加载中..." : "不选择（默认）"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">不选择</SelectItem>
-                      {mcpConfigs.map((mcp) => (
-                        <SelectItem key={mcp.id} value={mcp.id}>
-                          {mcp.id}
-                          {mcp.tools_cache?.length ? ` (${mcp.tools_cache.length} 个工具)` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {selectedMcpId && selectedMcpId !== "__none__" && (
-                  <div className="space-y-2">
-                    <Label>勾选可用的 MCP 工具</Label>
-                    <div className="max-h-32 overflow-y-auto space-y-2 rounded border p-2 custom-scrollbar">
-                      {mcpConfigs
-                        .find((c) => c.id === selectedMcpId)
-                        ?.tools_cache?.map((tool) => (
-                          <div key={tool.name} className="flex items-center space-x-2">
-                            <Checkbox
-                              id={`mcp-tool-${tool.name}`}
-                              checked={selectedMcpToolNames.has(tool.name)}
-                              onCheckedChange={(checked) => {
-                                setSelectedMcpToolNames((prev) => {
-                                  const next = new Set(prev);
-                                  if (checked) next.add(tool.name);
-                                  else next.delete(tool.name);
-                                  return next;
-                                });
-                              }}
-                              disabled={configReadOnly}
-                            />
-                            <label
-                              htmlFor={`mcp-tool-${tool.name}`}
-                              className="text-sm cursor-pointer flex-1"
-                            >
-                              {tool.title || tool.name}
-                            </label>
-                          </div>
-                        )) ?? (
-                        <div className="text-sm text-muted-foreground">该 MCP 暂无工具</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            )}
-
-            {/* additional_params */}
-            <div className="border rounded-lg p-4 space-y-4 bg-card shadow-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 bg-primary rounded-full" />
-                <h3 className="font-semibold text-sm font-mono">additional_params</h3>
-                <FieldHelp content="占位符参数。根据提示词中的占位符动态生成，用于替换提示词中的变量。" />
-                <Badge variant="secondary" className="text-xs">object</Badge>
-              </div>
-              <div className="pl-4 border-l-2 border-muted-foreground/30 space-y-3">
-                <PlaceholderParamsPanel
-                  variant="chat"
-                  needsTenant={needsTenant}
-                  tenantValue={debugTenantCode}
-                  onTenantChange={setDebugTenantCode}
-                  inputPlaceholders={inputPlaceholders}
-                  tablePlaceholders={tablePlaceholders}
-                  params={debugPlaceholderParams}
-                  onParamsChange={setDebugPlaceholderParams}
-                  tableInfoMap={tableInfoMap}
-                  loadingTables={loadingTables}
-                  openFilterPopover={openFilterPopover}
-                  onOpenFilterPopoverChange={setOpenFilterPopover}
-                  disabled={!debugParamsEditable}
-                  idPrefix="debug"
-                />
-              </div>
-            </div>
-
-            {/* 复制 CURL（置底） */}
-            <div className="mt-auto pt-4">
-              <Button
-                type="button"
-                size="sm"
-                className="w-full bg-black text-white hover:bg-black/90 disabled:opacity-50"
-                onClick={handleCopyCurl}
-                disabled={!prompt || streaming}
-              >
-                {copiedCurl ? (
-                  <>
-                    <Check className="w-4 h-4 mr-2" />
-                    已复制
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4 mr-2" />
-                    复制 CURL 命令
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
           )}
         </div>
       </DialogContent>

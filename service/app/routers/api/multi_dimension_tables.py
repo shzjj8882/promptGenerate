@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from typing import Optional
+
 import json
 from app.core.database import get_db
 from app.core.response import ResponseModel
@@ -382,60 +383,22 @@ async def create_table_row(
         # 使用 max_row_id + 1，如果没有行则从 0 开始
         new_row_id = max_row_id + 1 if max_row_id >= 0 else 0
     
-    # 验证数据格式
     columns = json.loads(table.columns) if table.columns else []
     column_keys = [col["key"] for col in columns]
-    column_map = {col["key"]: col for col in columns}
-    
     # 填充默认值：对于没有在请求中提供的列，如果列有默认值，则使用默认值
     final_cells = dict(row_data.cells)  # 复制请求中的 cells
     for column in columns:
         column_key = column.get("key")
         if column_key and column_key not in final_cells:
-            # 检查列是否有默认值
             column_options = column.get("options", {})
             if isinstance(column_options, dict):
                 default_value = column_options.get("defaultValue")
                 if default_value is not None and str(default_value).strip():
                     final_cells[column_key] = str(default_value).strip()
-    
-    validation_errors = []
-    for column_key, value in final_cells.items():
-        if column_key not in column_keys:
-            validation_errors.append(f"列 '{column_key}' 不存在于表格中")
-            continue
-        
-        column = column_map[column_key]
-        column_type = column.get("type", "text")
-        
-        if column_type == "number":
-            try:
-                float(value) if value else None
-            except (ValueError, TypeError):
-                validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的数字")
-        elif column_type == "boolean":
-            if value.lower() not in ("true", "false", "1", "0", "yes", "no", ""):
-                validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的布尔值")
-        elif column_type == "date":
-            pass
-        elif column_type in ("single_select", "multi_select"):
-            options = column.get("options", {}).get("options", [])
-            if options and value:
-                if column_type == "single_select":
-                    if value not in options:
-                        validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不在选项列表中")
-                elif column_type == "multi_select":
-                    values = [v.strip() for v in value.split(",") if v.strip()]
-                    invalid_values = [v for v in values if v not in options]
-                    if invalid_values:
-                        validation_errors.append(f"列 '{column_key}' 的值 '{', '.join(invalid_values)}' 不在选项列表中")
-    
-    if validation_errors:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="数据格式验证失败: " + "; ".join(validation_errors)
-        )
-    
+    from app.utils.table_row_validator import validate_row_data_for_columns
+
+    validate_row_data_for_columns(columns, final_cells)
+
     # 创建行
     new_row = MultiDimensionTableRow(
         table_id=table_id,
@@ -639,47 +602,13 @@ async def update_table_row_by_condition(
             detail=error_detail
         )
     
-    # 验证更新的单元格数据格式
     columns = json.loads(table.columns) if table.columns else []
     column_keys = [col["key"] for col in columns]
-    column_map = {col["key"]: col for col in columns}
-    
     if update_request.cells:
-        validation_errors = []
-        for column_key, value in update_request.cells.items():
-            if column_key not in column_map:
-                validation_errors.append(f"列 '{column_key}' 不存在于表格中")
-                continue
-            
-            column = column_map[column_key]
-            column_type = column.get("type", "text")
-            
-            if column_type == "number":
-                try:
-                    float(value) if value else None
-                except (ValueError, TypeError):
-                    validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的数字")
-            elif column_type == "boolean":
-                if value.lower() not in ("true", "false", "1", "0", "yes", "no", ""):
-                    validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的布尔值")
-            elif column_type in ("single_select", "multi_select"):
-                options = column.get("options", {}).get("options", [])
-                if options and value:
-                    if column_type == "single_select":
-                        if value not in options:
-                            validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不在选项列表中")
-                    elif column_type == "multi_select":
-                        values = [v.strip() for v in value.split(",") if v.strip()]
-                        invalid_values = [v for v in values if v not in options]
-                        if invalid_values:
-                            validation_errors.append(f"列 '{column_key}' 的值 '{', '.join(invalid_values)}' 不在选项列表中")
-        
-        if validation_errors:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="数据格式验证失败: " + "; ".join(validation_errors)
-            )
-    
+        from app.utils.table_row_validator import validate_row_data_for_columns
+
+        validate_row_data_for_columns(columns, update_request.cells)
+
     # 更新所有匹配的行（优化：批量查询单元格，避免 N+1）
     updated_row_ids_list = [r.id for r in rows]
     cells_by_row_col: dict = {}
@@ -865,7 +794,7 @@ async def delete_table_row_by_condition(
 @router.put("/multi-dimension-tables/{table_code}/rows/{row_id}", summary="更新表格行", tags=["应用接口 > 多维表格"])
 async def update_table_row(
     table_code: str = Path(..., description="表格代码"),
-    row_id: str = Path(..., description="行 ID（数据库主键）"),
+    row_id: str = Path(..., description="行 ID（数据库主键）", pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
     row_data: MultiDimensionTableRowUpdate = ...,
     team_id: Optional[str] = Query(None, description="团队 ID（可选，优先使用认证信息中的 team_id）"),
     auth_team_id: Optional[str] = Depends(get_team_id_from_auth),
@@ -967,7 +896,7 @@ async def update_table_row(
 @router.delete("/multi-dimension-tables/{table_code}/rows/{row_id}", summary="删除表格行", tags=["应用接口 > 多维表格"])
 async def delete_table_row(
     table_code: str = Path(..., description="表格代码"),
-    row_id: str = Path(..., description="行 ID（数据库主键）"),
+    row_id: str = Path(..., description="行 ID（数据库主键）", pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
     team_id: Optional[str] = Query(None, description="团队 ID（可选，优先使用认证信息中的 team_id）"),
     auth_team_id: Optional[str] = Depends(get_team_id_from_auth),
     db: AsyncSession = Depends(get_db),

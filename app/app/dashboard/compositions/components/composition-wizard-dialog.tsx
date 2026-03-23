@@ -297,7 +297,7 @@ export function CompositionWizardDialog({
                     )}
                   >
                     <span className="w-24 h-24 flex items-center justify-center shrink-0 rounded-md bg-muted/50">
-                      <Communication theme="outline" size={24} fill="#333" strokeLinejoin="miter" />
+                      <Communication theme="outline" size={24} fill="currentColor" strokeLinejoin="miter" />
                     </span>
                     <span className="text-sm font-medium">LLM 消息</span>
                   </button>
@@ -312,7 +312,7 @@ export function CompositionWizardDialog({
                     )}
                   >
                     <span className="w-24 h-24 flex items-center justify-center shrink-0 rounded-md bg-muted/50">
-                      <Api theme="outline" size={24} fill="#333" strokeLinejoin="miter" />
+                      <Api theme="outline" size={24} fill="currentColor" strokeLinejoin="miter" />
                     </span>
                     <span className="text-sm font-medium">接口</span>
                   </button>

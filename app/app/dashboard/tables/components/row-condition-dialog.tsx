@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { TableColumnFormField } from "@/components/shared/table-column-form-field";
 import { Copy, Check } from "@/components/icons";
 import { buildCurlCommandForApi, getCurlBaseUrl } from "@/lib/utils/curl";
@@ -50,7 +51,7 @@ export function RowConditionDialog({
   const [conditionColumnKey, setConditionColumnKey] = useState<string>("");
   const [conditionValue, setConditionValue] = useState("");
   const [formValues, setFormValues] = useState<Record<string, string>>({});
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  const { copied: copiedCurl, copy } = useCopyToClipboard({ resetDelay: 2000 });
   const [submitting, setSubmitting] = useState(false);
 
   const columns = table?.columns || [];
@@ -128,14 +129,8 @@ export function RowConditionDialog({
             teamAuthcode: userStore.user?.team_authcode,
           });
 
-    try {
-      await navigator.clipboard.writeText(curlCommand);
-      setCopiedCurl(true);
-      setTimeout(() => setCopiedCurl(false), 2000);
-    } catch {
-      // ignore
-    }
-  }, [table?.code, mode, conditionColumnKey, conditionValue, formValues]);
+    copy(curlCommand);
+  }, [table?.code, mode, conditionColumnKey, conditionValue, formValues, copy]);
 
 
   const title =

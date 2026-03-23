@@ -5,8 +5,11 @@
 DMU表格数据提取器 - 全功能版本
 从Dify工作流中提取的DMU数据提取逻辑
 """
+import logging
 import re
 import json
+
+logger = logging.getLogger(__name__)
 import datetime
 from typing import Dict, Any, List, Optional
 
@@ -589,7 +592,8 @@ def extract_dmu_data(llm_output: str) -> Dict[str, Any]:
             opportunity_score = extract_opportunity_score_from_cleaned(llm_output)
             if "error" in opportunity_score:
                 opportunity_score = {}
-        except Exception:
+        except Exception as e:
+            logger.debug("商机天平提取失败: %s", e)
             opportunity_score = {}
         
         # 3. 商机推进建议（暂时不提取）

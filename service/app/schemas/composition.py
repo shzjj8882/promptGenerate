@@ -13,7 +13,7 @@ class CompositionBase(BaseModel):
     tenant_id: str = Field("default", description="租户ID，default 表示默认提示词")
     prompt_id: Optional[str] = Field(None, description="关联提示词 ID")
     model_id: Optional[str] = Field(None, description="默认模型 ID")
-    mcp_id: Optional[str] = Field(None, description="默认 MCP 配置 ID")
+    mcp_id: Optional[str] = Field(None, description="默认 MCP 配置标识（ID 或名称）")
     mcp_tool_names: Optional[List[str]] = Field(default_factory=list, description="MCP 工具名列表")
     task_mode: str = Field("sync", description="接口模式：sync | async")
     notification_config: Optional[dict] = Field(None, description="异步任务通知配置")

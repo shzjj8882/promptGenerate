@@ -94,6 +94,10 @@ export interface TableCanvasViewProps {
   onReorderColumns?: (columnKeys: string[]) => void;
   /** 在保存按钮左侧插入的自定义内容（如历史记录按钮） */
   toolbarExtraLeftOfSave?: React.ReactNode;
+  /** 隐藏列 Popover 内容（在「按条件」右侧显示「隐藏列」按钮） */
+  columnVisibilityPopoverContent?: React.ReactNode;
+  /** 当前隐藏的列数量（用于「隐藏列」按钮徽章） */
+  columnVisibilityHiddenCount?: number;
   /** 只读模式：禁用单元格编辑、增删列、行右键菜单等交互与工具栏 */
   readOnly?: boolean;
   /** 是否启用列宽的本地持久化（localStorage）；工作台只读视图可关闭 */
@@ -141,6 +145,8 @@ export function TableCanvasView({
   onImportColumns,
   onReorderColumns,
   toolbarExtraLeftOfSave,
+  columnVisibilityPopoverContent,
+  columnVisibilityHiddenCount = 0,
   readOnly = false,
   persistColumnWidths = true,
   initialColumnWidths,
@@ -1312,6 +1318,8 @@ export function TableCanvasView({
           onDeleteByCondition={onDeleteByCondition}
           onQueryByCondition={onQueryByCondition}
           onImportClick={onImportRows ? () => setImportDialogOpen(true) : undefined}
+          columnVisibilityPopoverContent={columnVisibilityPopoverContent}
+          columnVisibilityHiddenCount={columnVisibilityHiddenCount}
           toolbarExtraLeftOfSave={toolbarExtraLeftOfSave}
           onSave={onSave}
           saving={saving}

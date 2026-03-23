@@ -15,7 +15,7 @@ const PromptsClient = dynamic(() => import("./prompts-client").then((mod) => ({ 
 });
 
 export const metadata: Metadata = {
-  title: "提示词管理 - PromptHub",
+  title: "提示词 - PromptHub",
 };
 
 export default async function PromptsPage() {

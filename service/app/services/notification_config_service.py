@@ -113,5 +113,7 @@ class NotificationConfigService:
             return None
         try:
             return json.loads(cfg.config) if isinstance(cfg.config, str) else cfg.config
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("通知配置 config 解析失败，id=%s: %s", cfg.id if cfg else "?", e)
             return None

@@ -30,8 +30,13 @@ def _worker_debug_log(msg: str, data: dict, hypothesis_id: str = ""):
     except Exception:
         pass
 # #endregion
+from sqlalchemy import update
+from datetime import timezone
+
 from app.models.llmchat_task import LLMChatTask
-from app.services.llmchat_api_executor import execute_api_prompt_request
+from app.services.llmchat_api_executor import execute_api_prompt_request, POINTS_PER_LLM_CALL
+from app.services.team_quota_service import TeamQuotaService
+from app.services.team_usage_log_service import log_team_usage_refund
 from app.services.notification_config_service import NotificationConfigService
 from app.services.email_service import EmailService
 
@@ -59,13 +64,16 @@ async def process_one(db: AsyncSession, task_id: str, scene: str, request_payloa
 
     try:
         request_payload = json.loads(request_payload_str) if request_payload_str else {}
+        request_payload["_from_worker"] = True  # 失败时由 Worker 退还，避免与 execute 内重复
         team_code = request_payload.get("teamCode")
+        # 优先用 DB 中的 task.team_id（创建时写入），Redis 消息可能丢失
+        effective_team_id = (team_id or "").strip() or (task.team_id if task.team_id else None) or None
         content, err = await execute_api_prompt_request(
             db=db,
             scene=scene,
             request_dict=request_payload,
             team_code=team_code,
-            team_id=team_id or None,
+            team_id=effective_team_id,
         )
 
         if err:
@@ -73,6 +81,25 @@ async def process_one(db: AsyncSession, task_id: str, scene: str, request_payloa
             task.error_message = err
             task.completed_at = datetime.utcnow()
             logger.info("[LLMChatTask] 任务失败 status=failed task_id=%s error=%s", task_id, err[:200] if err else "-")
+            # 补偿退还：仅预扣时由 Worker 退还（执行时扣的由 execute 内退还）；原子更新防多 Worker 重复退还
+            if effective_team_id and request_payload.get("_quota_pre_consumed"):
+                from datetime import datetime as dt
+                res = await db.execute(
+                    update(LLMChatTask)
+                    .where(LLMChatTask.id == task_id, LLMChatTask.quota_refunded_at.is_(None))
+                    .values(quota_refunded_at=dt.now(timezone.utc))
+                )
+                if res.rowcount > 0:
+                    await TeamQuotaService.refund_points(db, effective_team_id, POINTS_PER_LLM_CALL)
+                    bn = request_payload.get("_usage_log_business_name")
+                    if bn:
+                        await log_team_usage_refund(
+                            db, effective_team_id,
+                            amount=POINTS_PER_LLM_CALL,
+                            business_name=bn,
+                            extra_info=json.dumps({"reason": "refund", "task_id": task_id, "error": err[:200] if err else None}),
+                        )
+                    logger.info("[LLMChatTask] 配额已退还 task_id=%s team_id=%s", task_id, effective_team_id)
         else:
             task.status = "completed"
             task.result_content = content
@@ -135,6 +162,27 @@ async def process_one(db: AsyncSession, task_id: str, scene: str, request_payloa
         task.error_message = str(e)
         task.completed_at = datetime.utcnow()
         logger.exception("[LLMChatTask] 任务执行异常 status=failed task_id=%s: %s", task_id, e)
+        # 异常时补偿退还：仅预扣时由 Worker 退还
+        request_payload = json.loads(request_payload_str) if request_payload_str else {}
+        effective_team_id = (team_id or "").strip() or (task.team_id if task else None) or None
+        if effective_team_id and request_payload.get("_quota_pre_consumed"):
+            from datetime import datetime as dt
+            res = await db.execute(
+                update(LLMChatTask)
+                .where(LLMChatTask.id == task_id, LLMChatTask.quota_refunded_at.is_(None))
+                .values(quota_refunded_at=dt.now(timezone.utc))
+            )
+            if res.rowcount > 0:
+                await TeamQuotaService.refund_points(db, effective_team_id, POINTS_PER_LLM_CALL)
+                bn = request_payload.get("_usage_log_business_name")
+                if bn:
+                    await log_team_usage_refund(
+                        db, effective_team_id,
+                        amount=POINTS_PER_LLM_CALL,
+                        business_name=bn,
+                        extra_info=json.dumps({"reason": "refund", "task_id": task_id, "exception": str(e)[:200]}),
+                    )
+                logger.info("[LLMChatTask] 配额已退还(异常) task_id=%s team_id=%s", task_id, effective_team_id)
     finally:
         await db.commit()
 

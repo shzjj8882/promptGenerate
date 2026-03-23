@@ -4,13 +4,15 @@
 产出固定的 HTTP 请求地址，供服务端调用
 URL: POST /api/compositions/{compositionId}/tenant/{tenantId}/prompt/{promptId}/llm 或 request
 """
+import json
 from fastapi import APIRouter, Depends, HTTPException, Path, Body, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.api_auth import get_team_code_from_auth
 from app.core.response import ResponseModel
 from app.core.config import settings
@@ -20,34 +22,67 @@ from app.services.llmchat_api_executor import (
     execute_api_prompt_request,
     stream_llm_chat_request,
     check_llm_quota_before_stream,
+    POINTS_PER_LLM_CALL,
 )
+from app.services.team_quota_service import TeamQuotaService
+from app.services.team_usage_log_service import log_team_usage
 from app.routers.api.llmchat import LLMConfig, NotificationOption
 from app.models.prompt import Prompt
 
 router = APIRouter()
 
 
+def _validate_additional_params(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """校验 additional_params JSON 大小"""
+    if v is None:
+        return {}
+    size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
+    if size > settings.REQUEST_ADDITIONAL_PARAMS_MAX_BYTES:
+        raise ValueError(
+            f"占位符参数过大（{size} 字节），最大允许 {settings.REQUEST_ADDITIONAL_PARAMS_MAX_BYTES} 字节"
+        )
+    return v
+
+
 class CompositionLlmRequest(BaseModel):
     """组合 LLM 模式请求体"""
     additional_params: Optional[Dict[str, Any]] = Body(default={}, description="占位符参数")
     llm_config: Optional[LLMConfig] = Body(None, description="LLM 配置")
-    user_message: str = Body(..., description="用户消息")
+    user_message: str = Body(
+        ...,
+        max_length=settings.REQUEST_USER_MESSAGE_MAX_LENGTH,
+        description="用户消息",
+    )
     conversation_id: Optional[str] = Body(None, description="会话 ID")
     model_id: Optional[str] = Body(None, description="模型 ID，覆盖组合配置")
-    mcp_id: Optional[str] = Body(None, description="MCP ID，覆盖组合配置")
+    mcp_id: Optional[str] = Body(None, description="MCP 配置标识（ID 或名称），覆盖组合配置")
     mcp_tool_names: Optional[List[str]] = Body(None, description="MCP 工具列表，覆盖组合配置")
+
+    @field_validator("additional_params", mode="before")
+    @classmethod
+    def validate_additional_params(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return _validate_additional_params(v)
 
 
 class CompositionRequestRequest(BaseModel):
     """组合接口模式请求体"""
     additional_params: Optional[Dict[str, Any]] = Body(default={}, description="占位符参数")
     llm_config: Optional[LLMConfig] = Body(None, description="LLM 配置")
-    user_message: str = Body(..., description="用户消息")
+    user_message: str = Body(
+        ...,
+        max_length=settings.REQUEST_USER_MESSAGE_MAX_LENGTH,
+        description="用户消息",
+    )
     conversation_id: Optional[str] = Body(None, description="会话 ID")
     model_id: Optional[str] = Body(None, description="模型 ID，覆盖组合配置")
-    mcp_id: Optional[str] = Body(None, description="MCP ID，覆盖组合配置")
+    mcp_id: Optional[str] = Body(None, description="MCP 配置标识（ID 或名称），覆盖组合配置")
     mcp_tool_names: Optional[List[str]] = Body(None, description="MCP 工具列表，覆盖组合配置")
     notification: Optional[NotificationOption] = Body(None, description="通知选项（异步时）")
+
+    @field_validator("additional_params", mode="before")
+    @classmethod
+    def validate_additional_params(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return _validate_additional_params(v)
 
 
 async def _resolve_composition_prompt(
@@ -233,6 +268,20 @@ async def composition_request(
         _api_debug_log("notification_built", {"email_to": request_dict["notification"].get("email_to"), "will_create_task": bool(request_dict["notification"].get("email_to"))})
         # #endregion
         if request_dict["notification"].get("email_to"):
+            # 预扣积点，避免长任务占用配额导致其他任务误扣；失败时 Worker 补偿退还
+            if team_id:
+                await TeamQuotaService.check_and_consume_tokens(
+                    db=db, team_id=team_id, requested_tokens=POINTS_PER_LLM_CALL
+                )
+                request_dict["_quota_pre_consumed"] = True
+                request_dict["_usage_log_business_name"] = "组合接口"  # 失败退还时记录对应业务名
+                # 预扣时立即记录用量，确保历史用量可查（Worker 成功时不再重复记录）
+                await log_team_usage(
+                    db, team_id, usage_type=5,
+                    tokens_used=POINTS_PER_LLM_CALL,
+                    extra_info=json.dumps({"scene": prompt.scene, "mode": "api_sync", "pre_consumed": True}),
+                    business_name="组合接口",
+                )
             from app.services.llmchat_task_service import LLMChatTaskService
             task = await LLMChatTaskService.create_task(
                 db=db,
@@ -261,6 +310,20 @@ async def composition_request(
 
     # 同步模式改为异步队列（减轻 API 压力），除非 sync=true
     if not use_async and not sync and getattr(settings, "LLM_API_ASYNC_DEFAULT", True):
+        # 预扣积点，失败时 Worker 补偿退还
+        if team_id:
+            await TeamQuotaService.check_and_consume_tokens(
+                db=db, team_id=team_id, requested_tokens=POINTS_PER_LLM_CALL
+            )
+            request_dict["_quota_pre_consumed"] = True
+            request_dict["_usage_log_business_name"] = "组合接口"  # 失败退还时记录对应业务名
+            # 预扣时立即记录用量，确保历史用量可查
+            await log_team_usage(
+                db, team_id, usage_type=5,
+                tokens_used=POINTS_PER_LLM_CALL,
+                extra_info=json.dumps({"scene": prompt.scene, "mode": "api_sync", "pre_consumed": True}),
+                business_name="组合接口",
+            )
         from app.services.llmchat_task_service import LLMChatTaskService
         task = await LLMChatTaskService.create_task(
             db=db,

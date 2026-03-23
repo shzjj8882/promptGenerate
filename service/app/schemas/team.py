@@ -1,8 +1,9 @@
 """
 团队相关 Schema
+平台配额单位使用 points（积点），与第三方 LLM token 区分。
 """
 import enum
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices
 from typing import Optional, List, Literal
 from datetime import datetime
 
@@ -34,11 +35,13 @@ class TeamCreate(BaseModel):
         None,
         description="团队套餐有效期（精确到月，例如当月最后一天 23:59:59）",
     )
-    # 每月 token 上限（为空或 <=0 表示不限制）
+    # 每月积点上限（为空或 <=0 表示不限制）
     monthly_token_limit: Optional[int] = Field(
         None,
         ge=0,
-        description="每月 token 消耗上限（为空或 0 表示不限制）",
+        serialization_alias="monthly_points_limit",
+        validation_alias="monthly_points_limit",
+        description="每月积点消耗上限（为空或 0 表示不限制）",
     )
 
 
@@ -53,7 +56,9 @@ class TeamUpdate(BaseModel):
     monthly_token_limit: Optional[int] = Field(
         None,
         ge=0,
-        description="每月 token 消耗上限（为空或 0 表示不限制）",
+        serialization_alias="monthly_points_limit",
+        validation_alias="monthly_points_limit",
+        description="每月积点消耗上限（为空或 0 表示不限制）",
     )
 
 
@@ -65,19 +70,29 @@ class TeamResponse(TeamBase):
     is_system_admin_team: bool = False  # 是否为系统管理员团队
     member_count: Optional[int] = None  # 团队成员数量（可选，由接口填充）
     plan_expire_at: Optional[datetime] = None
-    monthly_token_limit: Optional[int] = None
+    monthly_token_limit: Optional[int] = Field(
+        None,
+        serialization_alias="monthly_points_limit",
+        validation_alias="monthly_points_limit",
+    )
     # 当前月份配额与用量信息（可选，由接口填充）
     current_month_year_month: Optional[str] = Field(
         None, description="当前月份标识，格式 YYYY-MM"
     )
     current_month_token_limit: Optional[int] = Field(
-        None, description="当前月份生效的 token 上限（考虑按月套餐覆盖）"
+        None,
+        serialization_alias="current_month_points_limit",
+        validation_alias="current_month_points_limit",
+        description="当前月份生效的积点上限（考虑按月套餐覆盖）",
     )
     current_month_call_limit: Optional[int] = Field(
         None, description="当前月份生效的调用次数上限"
     )
     current_month_tokens_used: Optional[int] = Field(
-        None, description="当前月份已消耗的 token 数量"
+        None,
+        serialization_alias="current_month_points_used",
+        validation_alias="current_month_points_used",
+        description="当前月份已消耗的积点数量",
     )
     current_month_calls_used: Optional[int] = Field(
         None, description="当前月份已调用的次数"
@@ -95,12 +110,20 @@ class TeamQuotaDetail(BaseModel):
     team_id: str
     year_month: str = Field(..., description="月份，格式 YYYY-MM")
     token_limit: Optional[int] = Field(
-        None, description="该月 token 上限（为空或 <=0 表示不限制）"
+        None,
+        serialization_alias="points_limit",
+        validation_alias=AliasChoices("points_limit", "token_limit"),
+        description="该月积点上限（为空或 <=0 表示不限制）",
     )
     call_limit: Optional[int] = Field(
         None, description="该月调用次数上限（为空或 <=0 表示不限制）"
     )
-    tokens_used: int = Field(0, description="该月已消耗 token 数量")
+    tokens_used: int = Field(
+        0,
+        serialization_alias="points_used",
+        validation_alias=AliasChoices("points_used", "tokens_used"),
+        description="该月已消耗积点数量",
+    )
     calls_used: int = Field(0, description="该月已调用次数")
 
 
@@ -114,7 +137,8 @@ class TeamQuotaUpdateRequest(BaseModel):
     token_limit: Optional[int] = Field(
         None,
         ge=0,
-        description="该月 token 上限；为空表示不变，0 表示不限制",
+        validation_alias=AliasChoices("points_limit", "token_limit"),
+        description="该月积点上限；为空表示不变，0 表示不限制",
     )
     call_limit: Optional[int] = Field(
         None,
@@ -124,7 +148,7 @@ class TeamQuotaUpdateRequest(BaseModel):
 
 
 class TeamQuotaTopupRequest(BaseModel):
-    """为某月套餐增加 token 上限请求"""
+    """为某月套餐增加积点上限请求"""
 
     year_month: Optional[str] = Field(
         None,
@@ -133,7 +157,8 @@ class TeamQuotaTopupRequest(BaseModel):
     extra_tokens: int = Field(
         ...,
         gt=0,
-        description="追加的 token 数量，会在当前生效上限基础上增加",
+        validation_alias=AliasChoices("extra_points", "extra_tokens"),
+        description="追加的积点数量，会在当前生效上限基础上增加",
     )
     type: Literal["gift", "purchase"] = Field(
         "purchase",
@@ -146,12 +171,13 @@ class TeamQuotaTopupRequest(BaseModel):
 
 
 class TeamPackageRequest(BaseModel):
-    """为团队设置套餐（按月基础 token 配额 + 持续月份）"""
+    """为团队设置套餐（按月基础积点配额 + 持续月份）"""
 
     monthly_token_limit: int = Field(
         ...,
         ge=0,
-        description="每月基础 token 配额（0 表示不限制）",
+        validation_alias=AliasChoices("monthly_points_limit", "monthly_token_limit"),
+        description="每月基础积点配额（0 表示不限制）",
     )
     start_year_month: str = Field(
         ...,
@@ -190,9 +216,9 @@ class TeamUsageLogItem(BaseModel):
     business_name: Optional[str] = None
     usage_date: str
     year_month: str
-    tokens_used: int
+    tokens_used: int = Field(0, serialization_alias="points_used", validation_alias=AliasChoices("points_used", "tokens_used"))
     calls_count: int
-    extra_info: Optional[str]
+    extra_info: Optional[str] = None
     created_at: datetime
 
 
@@ -200,14 +226,24 @@ class TeamUsageDailyItem(BaseModel):
     """按日用量（折线图）"""
 
     date: str = Field(..., description="日期 YYYY-MM-DD")
-    tokens_used: int = Field(0, description="该日消耗的 token 数量")
+    tokens_used: int = Field(
+        0,
+        serialization_alias="points_used",
+        validation_alias=AliasChoices("points_used", "tokens_used"),
+        description="该日消耗的积点数量",
+    )
 
 
 class TeamUsageByBusinessItem(BaseModel):
     """按业务用量（饼图）"""
 
     business_name: str = Field(..., description="业务名称（business_name 为空时用 usage_type 描述）")
-    tokens_used: int = Field(0, description="该业务消耗的 token 数量")
+    tokens_used: int = Field(
+        0,
+        serialization_alias="points_used",
+        validation_alias=AliasChoices("points_used", "tokens_used"),
+        description="该业务消耗的积点数量",
+    )
 
 
 class TeamPackageMonthOverview(BaseModel):
@@ -215,22 +251,66 @@ class TeamPackageMonthOverview(BaseModel):
 
     year_month: str = Field(..., description="月份，格式 YYYY-MM")
     base_token_limit: Optional[int] = Field(
-        None, description="该月 token 总配额（合约+赠送+追加，<=0 或 None 表示不限）"
+        None,
+        serialization_alias="base_points_limit",
+        validation_alias=AliasChoices("base_points_limit", "base_token_limit"),
+        description="该月积点总配额（合约+赠送+追加，<=0 或 None 表示不限）",
     )
-    gift_tokens: int = Field(0, description="赠送配额，消费优先")
-    extra_tokens: int = Field(0, description="追加配额，消费最后")
+    gift_tokens: int = Field(
+        0,
+        serialization_alias="gift_points",
+        validation_alias=AliasChoices("gift_points", "gift_tokens"),
+        description="赠送配额，消费优先",
+    )
+    extra_tokens: int = Field(
+        0,
+        serialization_alias="extra_points",
+        validation_alias=AliasChoices("extra_points", "extra_tokens"),
+        description="追加配额，消费最后",
+    )
     effective_token_limit: Optional[int] = Field(
-        None, description="该月生效的 token 上限（总配额 + 上月结转，<=0 或 None 表示不限）"
+        None,
+        serialization_alias="effective_points_limit",
+        validation_alias=AliasChoices("effective_points_limit", "effective_token_limit"),
+        description="该月生效的积点上限（总配额 + 上月结转，<=0 或 None 表示不限）",
     )
-    tokens_used: int = Field(0, description="该月已消耗 token 数量")
+    tokens_used: int = Field(
+        0,
+        serialization_alias="points_used",
+        validation_alias=AliasChoices("points_used", "tokens_used"),
+        description="该月已消耗积点数量",
+    )
     rollover_from_prev_tokens: int = Field(
-        0, description="该月从上一自然月结转而来的 token 数量"
+        0,
+        serialization_alias="rollover_from_prev_points",
+        validation_alias=AliasChoices("rollover_from_prev_points", "rollover_from_prev_tokens"),
+        description="该月从上一自然月结转而来的积点数量",
     )
     # 消费分项（按优先级记录，后端持久化）
-    gift_tokens_used: int = Field(0, description="赠送已消耗")
-    rollover_tokens_used: int = Field(0, description="结余已消耗")
-    base_tokens_used: int = Field(0, description="套餐已消耗")
-    extra_tokens_used: int = Field(0, description="追加已消耗")
+    gift_tokens_used: int = Field(
+        0,
+        serialization_alias="gift_points_used",
+        validation_alias=AliasChoices("gift_points_used", "gift_tokens_used"),
+        description="赠送已消耗",
+    )
+    rollover_tokens_used: int = Field(
+        0,
+        serialization_alias="rollover_points_used",
+        validation_alias=AliasChoices("rollover_points_used", "rollover_tokens_used"),
+        description="结余已消耗",
+    )
+    base_tokens_used: int = Field(
+        0,
+        serialization_alias="base_points_used",
+        validation_alias=AliasChoices("base_points_used", "base_tokens_used"),
+        description="套餐已消耗",
+    )
+    extra_tokens_used: int = Field(
+        0,
+        serialization_alias="extra_points_used",
+        validation_alias=AliasChoices("extra_points_used", "extra_tokens_used"),
+        description="追加已消耗",
+    )
 
 
 class TeamPackageOverview(BaseModel):

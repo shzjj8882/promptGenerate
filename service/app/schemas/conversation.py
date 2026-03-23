@@ -41,7 +41,7 @@ class ConversationMessageResponse(ConversationMessageBase):
             if obj.meta_data:
                 try:
                     obj_dict['metadata'] = json.loads(obj.meta_data) if isinstance(obj.meta_data, str) else obj.meta_data
-                except:
+                except Exception:
                     obj_dict['metadata'] = None
             else:
                 obj_dict['metadata'] = None
@@ -95,7 +95,7 @@ class ConversationResponse(ConversationBase):
             if obj.meta_data:
                 try:
                     obj_dict['metadata'] = json.loads(obj.meta_data) if isinstance(obj.meta_data, str) else obj.meta_data
-                except:
+                except Exception:
                     obj_dict['metadata'] = None
             else:
                 obj_dict['metadata'] = None

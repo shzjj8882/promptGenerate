@@ -529,7 +529,7 @@ function RBACClientImpl(props: RBACClientProps = {}) {
           }`}
         >
           <UserCog className="inline mr-2 h-4 w-4" />
-          用户角色分配
+          权限分配
         </button>
         <button
           onClick={() => setActiveTab("menu-management")}
@@ -540,7 +540,7 @@ function RBACClientImpl(props: RBACClientProps = {}) {
           }`}
         >
           <Menu className="inline mr-2 h-4 w-4" />
-          菜单管理
+          路由管理
         </button>
       </div>
 

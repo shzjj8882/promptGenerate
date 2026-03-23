@@ -335,7 +335,7 @@ function MenusClientImpl(props: MenusClientProps) {
   return (
     <div className="flex h-full flex-col gap-6">
       <PageHeader
-        title="菜单管理"
+        title="路由管理"
         description="管理系统菜单的层级结构和排序顺序，修改后点击保存按钮生效"
         action={
           <div className="flex items-center gap-2">

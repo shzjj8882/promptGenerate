@@ -15,27 +15,27 @@ export interface Team {
   authcode?: string; // API 认证码（用于调用 /api 接口）
   is_active: boolean;
   member_count?: number; // 团队成员数量
-  // 订阅与配额信息
+  // 订阅与配额信息（平台积点，非第三方 token）
   plan_expire_at?: string | null;
-  monthly_token_limit?: number | null;
+  monthly_points_limit?: number | null;
   // 当前月份配额与用量概览（后端附带）
   current_month_year_month?: string;
-  current_month_token_limit?: number | null;
+  current_month_points_limit?: number | null;
   current_month_call_limit?: number | null;
-  current_month_tokens_used?: number;
+  current_month_points_used?: number;
   current_month_calls_used?: number;
   /** 三张统计卡片分项：套餐状态、套餐外额度、上月结余 */
   current_month_breakdown?: {
     year_month: string;
-    base_token_limit: number;
-    gift_tokens: number;
-    extra_tokens: number;
-    rollover_from_prev_tokens: number;
-    tokens_used: number;
-    gift_tokens_used: number;
-    rollover_tokens_used: number;
-    base_tokens_used: number;
-    extra_tokens_used: number;
+    base_points_limit: number;
+    gift_points: number;
+    extra_points: number;
+    rollover_from_prev_points: number;
+    points_used: number;
+    gift_points_used: number;
+    rollover_points_used: number;
+    base_points_used: number;
+    extra_points_used: number;
   };
   created_at: string;
   updated_at: string;
@@ -44,27 +44,27 @@ export interface Team {
 export interface TeamQuotaDetail {
   team_id: string;
   year_month: string;
-  token_limit: number | null;
+  points_limit: number | null;
   call_limit: number | null;
-  tokens_used: number;
+  points_used: number;
   calls_used: number;
 }
 
 export interface TeamQuotaUpdateRequest {
   year_month?: string; // YYYY-MM，默认当前月
-  token_limit?: number; // 为空不变，0 表示不限制
+  points_limit?: number; // 为空不变，0 表示不限制
   call_limit?: number; // 为空不变，0 表示不限制
 }
 
 export interface TeamQuotaTopupRequest {
   year_month?: string; // YYYY-MM，默认当前月
-  extra_tokens: number; // >0
+  extra_points: number; // >0
   type?: "gift" | "purchase"; // 赠送 | 购买
   comment?: string; // 备注说明
 }
 
 export interface TeamPackageRequest {
-  monthly_token_limit: number; // 每月基础 token 配额
+  monthly_points_limit: number; // 每月基础积点配额
   start_year_month: string; // 套餐起始月份 YYYY-MM
   duration_months: number; // 套餐持续月份数
 }
@@ -75,17 +75,17 @@ export interface DeleteTeamMonthlyPlanParams {
 
 export interface TeamPackageMonthOverview {
   year_month: string;
-  base_token_limit: number | null;
-  gift_tokens?: number;
-  extra_tokens?: number;
-  effective_token_limit: number | null;
-  tokens_used: number;
-  rollover_from_prev_tokens: number;
+  base_points_limit: number | null;
+  gift_points?: number;
+  extra_points?: number;
+  effective_points_limit: number | null;
+  points_used: number;
+  rollover_from_prev_points: number;
   /** 消费分项（后端按优先级记录） */
-  gift_tokens_used?: number;
-  rollover_tokens_used?: number;
-  base_tokens_used?: number;
-  extra_tokens_used?: number;
+  gift_points_used?: number;
+  rollover_points_used?: number;
+  base_points_used?: number;
+  extra_points_used?: number;
 }
 
 export interface TeamPackageOverview {
@@ -199,9 +199,9 @@ export async function updateTeamQuota(
 }
 
 /**
- * 为团队某月追加 token 上限
+ * 为团队某月追加积点上限
  */
-export async function topupTeamQuotaTokens(
+export async function topupTeamQuotaPoints(
   teamId: string,
   body: TeamQuotaTopupRequest
 ): Promise<TeamQuotaDetail> {
@@ -212,7 +212,7 @@ export async function topupTeamQuotaTokens(
 }
 
 /**
- * 为团队设置套餐（每月基础 token 配额 + 持续月份）
+ * 为团队设置套餐（每月基础积点配额 + 持续月份）
  */
 export async function setTeamPackage(
   teamId: string,
@@ -256,11 +256,12 @@ export async function getTeamPaymentLogs(
   const res = await apiRequest<{ items?: TeamPaymentLogItem[] } | { data?: { items?: TeamPaymentLogItem[] } }>(
     `/admin/teams/${teamId}/payment-logs${qs ? `?${qs}` : ""}`
   );
-  const items = Array.isArray(res?.items)
-    ? res.items
-    : Array.isArray((res as { data?: { items?: TeamPaymentLogItem[] } })?.data?.items)
-      ? (res as { data: { items: TeamPaymentLogItem[] } }).data.items
-      : [];
+  const items = (() => {
+    const a = res as { items?: TeamPaymentLogItem[] };
+    if (Array.isArray(a?.items)) return a.items;
+    const b = res as { data?: { items?: TeamPaymentLogItem[] } };
+    return Array.isArray(b?.data?.items) ? b.data.items : [];
+  })();
   return { items };
 }
 
@@ -273,7 +274,7 @@ export interface TeamUsageLogItem {
   usage_type: number;
   usage_date: string;
   year_month: string;
-  tokens_used: number;
+  points_used: number;
   calls_count: number;
   extra_info: string | null;
   business_name?: string | null;
@@ -283,13 +284,13 @@ export interface TeamUsageLogItem {
 /** 按日用量（折线图） */
 export interface TeamUsageDailyItem {
   date: string;
-  tokens_used: number;
+  points_used: number;
 }
 
 /** 按业务用量（饼图） */
 export interface TeamUsageByBusinessItem {
   business_name: string;
-  tokens_used: number;
+  points_used: number;
 }
 
 /** 获取当前团队按日用量（折线图） */
@@ -318,10 +319,16 @@ export async function getMyTeamUsageByBusiness(params?: {
   if (params?.year_month) q.append("year_month", params.year_month);
   if (params?.start_date) q.append("start_date", params.start_date);
   if (params?.end_date) q.append("end_date", params.end_date);
-  const res = await apiRequest<{ items?: TeamUsageByBusinessItem[] }>(
-    `/admin/teams/my-team/usage/by-business${q.toString() ? `?${q}` : ""}`
-  );
-  return { items: res?.items ?? [] };
+  const res = await apiRequest<
+    { items?: TeamUsageByBusinessItem[] } | { data?: { items?: TeamUsageByBusinessItem[] } }
+  >(`/admin/teams/my-team/usage/by-business${q.toString() ? `?${q}` : ""}`);
+  const items = (() => {
+    const a = res as { items?: TeamUsageByBusinessItem[] };
+    if (Array.isArray(a?.items)) return a.items;
+    const b = res as { data?: { items?: TeamUsageByBusinessItem[] } };
+    return Array.isArray(b?.data?.items) ? b.data.items : [];
+  })();
+  return { items };
 }
 
 /** 获取当前团队用量日志（分页） */

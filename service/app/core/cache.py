@@ -55,10 +55,10 @@ async def get_cache(key: str) -> Optional[str]:
     try:
         return await redis.get(key)
     except (redis.ConnectionError, redis.TimeoutError) as e:
-        logger.warning(f"Redis 连接错误: {e}")
+        logger.warning("Redis 连接错误: %s", e)
         return None
     except Exception as e:
-        logger.warning(f"Redis get 失败，key={key}: {e}")
+        logger.warning("Redis get 失败，key=%s: %s", key, e)
         return None
 
 
@@ -77,9 +77,9 @@ async def set_cache(key: str, value: str, ttl: int) -> None:
     try:
         await redis.setex(key, ttl, value)
     except (redis.ConnectionError, redis.TimeoutError) as e:
-        logger.warning(f"Redis 连接错误: {e}")
+        logger.warning("Redis 连接错误: %s", e)
     except Exception as e:
-        logger.warning(f"Redis set 失败，key={key}: {e}")
+        logger.warning("Redis set 失败，key=%s: %s", key, e)
 
 
 async def delete_cache(key: str) -> None:
@@ -95,9 +95,9 @@ async def delete_cache(key: str) -> None:
     try:
         await redis.delete(key)
     except (redis.ConnectionError, redis.TimeoutError) as e:
-        logger.warning(f"Redis 连接错误: {e}")
+        logger.warning("Redis 连接错误: %s", e)
     except Exception as e:
-        logger.warning(f"Redis delete 失败，key={key}: {e}")
+        logger.warning("Redis delete 失败，key=%s: %s", key, e)
 
 
 async def delete_cache_pattern(pattern: str) -> None:
@@ -124,9 +124,9 @@ async def delete_cache_pattern(pattern: str) -> None:
             await redis.delete(*batch)
             total += len(batch)
         if total > 0:
-            logger.debug(f"删除缓存模式 {pattern}，共 {total} 个 key")
+            logger.debug("删除缓存模式 %s，共 %d 个 key", pattern, total)
     except Exception as e:
-        logger.warning(f"Redis delete pattern 失败: {e}")
+        logger.warning("Redis delete pattern 失败: %s", e)
 
 
 async def delete_cache_keys(keys: List[str]) -> None:
@@ -143,9 +143,9 @@ async def delete_cache_keys(keys: List[str]) -> None:
         return
     try:
         await redis.delete(*keys)
-        logger.debug(f"删除缓存 key，共 {len(keys)} 个")
+        logger.debug("删除缓存 key，共 %d 个", len(keys))
     except Exception as e:
-        logger.warning(f"Redis delete keys 失败: {e}")
+        logger.warning("Redis delete keys 失败: %s", e)
 
 
 async def add_cache_key_to_set(set_key: str, cache_key: str) -> None:
@@ -162,7 +162,7 @@ async def add_cache_key_to_set(set_key: str, cache_key: str) -> None:
     try:
         await redis.sadd(set_key, cache_key)
     except Exception as e:
-        logger.warning(f"Redis sadd 失败: {e}")
+        logger.warning("Redis sadd 失败: %s", e)
 
 
 async def delete_cache_by_set(set_key: str) -> None:
@@ -181,9 +181,9 @@ async def delete_cache_by_set(set_key: str) -> None:
             keys_list = list(keys)
             await redis.delete(*keys_list)
             await redis.delete(set_key)  # 删除 Set 本身
-            logger.debug(f"通过 Set {set_key} 删除缓存，共 {len(keys_list)} 个 key")
+            logger.debug("通过 Set %s 删除缓存，共 %d 个 key", set_key, len(keys_list))
     except Exception as e:
-        logger.warning(f"Redis delete by set 失败: {e}")
+        logger.warning("Redis delete by set 失败: %s", e)
 
 
 async def cached(
@@ -214,7 +214,7 @@ async def cached(
                 try:
                     return deserialize(cached_value)
                 except Exception as e:
-                    logger.warning(f"缓存反序列化失败: {e}")
+                    logger.warning("缓存反序列化失败: %s", e)
             
             # 执行函数
             result = await func(*args, **kwargs)
@@ -224,7 +224,7 @@ async def cached(
                 serialized = serialize(result)
                 await set_cache(cache_key, serialized, cache_ttl)
             except Exception as e:
-                logger.warning(f"缓存序列化/写入失败: {e}")
+                logger.warning("缓存序列化/写入失败: %s", e)
             
             return result
         return wrapper

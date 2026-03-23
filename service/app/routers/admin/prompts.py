@@ -264,7 +264,7 @@ async def get_placeholders(
             code=status.HTTP_200_OK,
         )
     except Exception as e:
-        logger.exception(f"获取占位符列表失败: scene={scene}")
+        logger.exception("获取占位符列表失败: scene=%s", scene)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取占位符列表失败: {str(e)}"

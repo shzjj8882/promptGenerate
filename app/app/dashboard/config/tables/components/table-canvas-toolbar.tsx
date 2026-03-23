@@ -1,9 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ResponsivePopover } from "@/components/ui/responsive-popover";
 import { ResponsiveMenu } from "@/components/ui/responsive-menu";
-import { Plus, Undo2, Redo2, Save, Upload, Filter, Search, Pencil, Trash2, ChevronDownIcon, Eye } from "@/components/icons";
+import { Plus, Undo2, Redo2, Save, Upload, Filter, Search, Pencil, Trash2, ChevronDownIcon, EyeOff } from "@/components/icons";
 import type { FilterGroup } from "./table-canvas-types";
 
 export interface TableCanvasToolbarProps {
@@ -17,8 +18,10 @@ export interface TableCanvasToolbarProps {
   showFilterPanel: boolean;
   onFilterPanelChange: (open: boolean) => void;
   filterPopoverContent: React.ReactNode;
-  /** 隐藏列下拉菜单内容（有值时在左侧显示「隐藏列」按钮） */
+  /** 隐藏列 Popover 内容（有值时在「按条件」右侧显示「隐藏列」按钮） */
   columnVisibilityPopoverContent?: React.ReactNode;
+  /** 当前隐藏的列数量（用于显示徽章，如「隐藏列 (3)」） */
+  columnVisibilityHiddenCount?: number;
   conditionMenuOpen: boolean;
   onConditionMenuOpenChange: (open: boolean) => void;
   onEditByCondition?: () => void;
@@ -43,6 +46,7 @@ export function TableCanvasToolbar({
   onFilterPanelChange,
   filterPopoverContent,
   columnVisibilityPopoverContent,
+  columnVisibilityHiddenCount = 0,
   conditionMenuOpen,
   onConditionMenuOpenChange,
   onEditByCondition,
@@ -55,6 +59,7 @@ export function TableCanvasToolbar({
   hasUnsavedChanges = false,
 }: TableCanvasToolbarProps) {
   const hasConditionActions = !!(onEditByCondition || onDeleteByCondition || onQueryByCondition);
+  const [columnVisibilityOpen, setColumnVisibilityOpen] = useState(false);
 
   return (
     <div className="flex flex-wrap items-center gap-2 p-2 sm:p-3 border-b bg-muted/50 shrink-0">
@@ -73,21 +78,6 @@ export function TableCanvasToolbar({
       <Button size="icon" variant="outline" onClick={onAddRow} className="shrink-0" title="添加">
         <Plus className="h-4 w-4 shrink-0" />
       </Button>
-
-      {columnVisibilityPopoverContent && (
-        <ResponsivePopover
-          trigger={
-            <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
-              <Eye className="h-4 w-4" />
-              <span className="hidden sm:inline">隐藏列</span>
-              <ChevronDownIcon className="h-3 w-3 shrink-0" />
-            </Button>
-          }
-          align="start"
-          contentClassName="w-[min(260px,92vw)] max-h-[min(70vh,420px)] overflow-y-auto p-3"
-          content={columnVisibilityPopoverContent}
-        />
-      )}
 
       <ResponsivePopover
         open={showFilterPanel}
@@ -128,6 +118,29 @@ export function TableCanvasToolbar({
               ? [{ icon: <Trash2 className="h-4 w-4" />, label: "按条件删除", onClick: onDeleteByCondition, variant: "destructive" as const }]
               : []),
           ]}
+        />
+      )}
+
+      {columnVisibilityPopoverContent && (
+        <ResponsivePopover
+          open={columnVisibilityOpen}
+          onOpenChange={setColumnVisibilityOpen}
+          trigger={
+            <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
+              <EyeOff className="h-4 w-4" />
+              <span className="hidden sm:inline">隐藏列</span>
+              {columnVisibilityHiddenCount > 0 && (
+                <span className="bg-primary-foreground text-primary px-1.5 py-0.5 rounded text-xs">
+                  {columnVisibilityHiddenCount}
+                </span>
+              )}
+              <ChevronDownIcon className="h-3 w-3 shrink-0" />
+            </Button>
+          }
+          title="设置列"
+          align="start"
+          contentClassName="w-[min(260px,92vw)] max-h-[min(70vh,420px)] overflow-y-auto p-3"
+          content={columnVisibilityPopoverContent}
         />
       )}
 

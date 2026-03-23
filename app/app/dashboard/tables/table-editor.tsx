@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { observer } from "mobx-react-lite";
 import { Button } from "@/components/ui/button";
-import { History, LayoutGrid } from "@/components/icons";
+import { History } from "@/components/icons";
 import {
   loadHiddenColumnsFromStorage,
   saveHiddenColumnsToStorage,
@@ -35,7 +35,7 @@ import { RowQueryDialog } from "./components/row-query-dialog";
 import { TableEditorHistorySidebar } from "./components/table-editor-history-sidebar";
 import { TableEditorAddColumnDialog } from "./components/table-editor-add-column-dialog";
 import { TableEditorEditColumnDialog } from "./components/table-editor-edit-column-dialog";
-import { TableEditorColumnVisibilitySheet } from "./components/table-editor-column-visibility-sheet";
+import { TableEditorColumnVisibilityPopover } from "./components/table-editor-column-visibility-popover";
 import type { HistoryState, CompletedHistoryEntry } from "./table-editor-types";
 import { useTableEditorHistory } from "./hooks/use-table-editor-history";
 import { useTableColumnActions } from "./hooks/use-table-column-actions";
@@ -63,7 +63,6 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
 
   /** 隐藏列（仅前端展示，存 localStorage，按 tableId 区分） */
   const [hiddenColumnKeys, setHiddenColumnKeys] = useState<string[]>([]);
-  const [columnVisibilitySheetOpen, setColumnVisibilitySheetOpen] = useState(false);
 
   const { handleError } = useErrorHandler({
     showToast: true,
@@ -527,18 +526,18 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
           onImportColumns={handleImportColumns}
           onReorderColumns={handleReorderColumns}
           hiddenColumnKeys={hiddenColumnKeys.length > 0 ? hiddenColumnKeys : undefined}
+          columnVisibilityPopoverContent={
+            table && table.columns.length > 0 ? (
+              <TableEditorColumnVisibilityPopover
+                columns={table.columns}
+                hiddenColumnKeys={hiddenColumnKeys}
+                onHiddenColumnKeysChange={handleHiddenColumnKeysChange}
+              />
+            ) : undefined
+          }
+          columnVisibilityHiddenCount={hiddenColumnKeys.length}
           toolbarExtraLeftOfSave={
             <>
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => setColumnVisibilitySheetOpen(true)}
-                className="shrink-0"
-                title="设置列"
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </Button>
               <Button
                 type="button"
                 size="icon"
@@ -636,13 +635,6 @@ function TableEditorImpl({ tableId, onTableUpdated, initialTable, initialRows }:
         onSubmit={handleSaveEditColumn}
       />
 
-      <TableEditorColumnVisibilitySheet
-        open={columnVisibilitySheetOpen}
-        onOpenChange={setColumnVisibilitySheetOpen}
-        columns={table?.columns ?? []}
-        hiddenColumnKeys={hiddenColumnKeys}
-        onHiddenColumnKeysChange={handleHiddenColumnKeysChange}
-      />
     </div>
   );
 }

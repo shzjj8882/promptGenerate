@@ -33,8 +33,9 @@ class SceneService:
                 cached = await redis_client.get(cache_key)
                 if cached:
                     return json.loads(cached)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug("场景列表缓存读取失败: %s", e)
         
         # 在数据库层面过滤，而不是查询所有后在内存中过滤
         conditions = []
@@ -72,8 +73,9 @@ class SceneService:
                     CACHE_TTL["scene"],
                     json.dumps(filtered, default=str),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug("场景列表缓存写入失败: %s", e)
         
         return filtered
 
@@ -133,7 +135,7 @@ class SceneService:
             import logging
             logger = logging.getLogger(__name__)
             
-            logger.info(f"创建场景 {code}，占位符数量: {len(placeholders)}")
+            logger.info("创建场景 %s，占位符数量: %d", code, len(placeholders))
             
             # 用于存储要关联的占位符对象
             placeholders_to_associate = []
@@ -142,10 +144,10 @@ class SceneService:
                 placeholder_key = item.get("key", "")
                 placeholder_label = item.get("label", "")
                 if not placeholder_key:
-                    logger.warning(f"跳过无效的占位符（缺少 key）: {item}")
+                    logger.warning("跳过无效的占位符（缺少 key）: %s", item)
                     continue
                 
-                logger.info(f"处理占位符: key={placeholder_key}, label={placeholder_label}")
+                logger.info("处理占位符: key=%s, label=%s", placeholder_key, placeholder_label)
                 
                 # 查找全局占位符（scene=""）
                 placeholder_result = await db.execute(
@@ -161,7 +163,7 @@ class SceneService:
                 
                 if not placeholder:
                     # 如果占位符不存在，创建全局占位符
-                    logger.info(f"占位符 {placeholder_key} 不存在，创建全局占位符")
+                    logger.info("占位符 %s 不存在，创建全局占位符", placeholder_key)
                     placeholder_data = PlaceholderCreate(
                         key=placeholder_key,
                         label=placeholder_label,
@@ -169,14 +171,14 @@ class SceneService:
                         description=item.get("description"),
                     )
                     placeholder = await PlaceholderService.create_placeholder(db, placeholder_data, commit=False)
-                    logger.info(f"成功创建全局占位符 {placeholder_key}")
+                    logger.info("成功创建全局占位符 %s", placeholder_key)
                 else:
                     # 如果占位符已存在，更新 label 和 description（如果需要）
                     if placeholder_label and placeholder.label != placeholder_label:
                         placeholder.label = placeholder_label
                     if item.get("description") and placeholder.description != item.get("description"):
                         placeholder.description = item.get("description")
-                    logger.info(f"找到全局占位符 {placeholder_key}，将关联到场景")
+                    logger.info("找到全局占位符 %s，将关联到场景", placeholder_key)
                 
                 placeholders_to_associate.append(placeholder)
             
@@ -190,7 +192,7 @@ class SceneService:
                             placeholder_id=placeholder.id
                         )
                     )
-                logger.info(f"场景 {code} 关联了 {len(placeholders_to_associate)} 个占位符")
+                logger.info("场景 %s 关联了 %d 个占位符", code, len(placeholders_to_associate))
 
         try:
             await db.commit()
@@ -245,7 +247,7 @@ class SceneService:
             import logging
             logger = logging.getLogger(__name__)
             
-            logger.info(f"更新场景 {scene_code}，占位符数量: {len(placeholders) if placeholders else 0}")
+            logger.info("更新场景 %s，占位符数量: %d", scene_code, len(placeholders) if placeholders else 0)
             
             # 清空场景的占位符关联（直接操作关联表，避免懒加载问题）
             from app.models.prompt import scene_placeholders
@@ -264,10 +266,10 @@ class SceneService:
                     placeholder_key = item.get("key", "")
                     placeholder_label = item.get("label", "")
                     if not placeholder_key:
-                        logger.warning(f"跳过无效的占位符（缺少 key）: {item}")
+                        logger.warning("跳过无效的占位符（缺少 key）: %s", item)
                         continue
                     
-                    logger.info(f"处理占位符: key={placeholder_key}, label={placeholder_label}")
+                    logger.info("处理占位符: key=%s, label=%s", placeholder_key, placeholder_label)
                     
                     # 查找全局占位符（scene=""）
                     placeholder_result = await db.execute(
@@ -283,7 +285,7 @@ class SceneService:
                     
                     if not placeholder:
                         # 如果占位符不存在，创建全局占位符
-                        logger.info(f"占位符 {placeholder_key} 不存在，创建全局占位符")
+                        logger.info("占位符 %s 不存在，创建全局占位符", placeholder_key)
                         placeholder_data = PlaceholderCreate(
                             key=placeholder_key,
                             label=placeholder_label,
@@ -291,14 +293,14 @@ class SceneService:
                             description=item.get("description"),
                         )
                         placeholder = await PlaceholderService.create_placeholder(db, placeholder_data, commit=False)
-                        logger.info(f"成功创建全局占位符 {placeholder_key}")
+                        logger.info("成功创建全局占位符 %s", placeholder_key)
                     else:
                         # 如果占位符已存在，更新 label 和 description（如果需要）
                         if placeholder_label and placeholder.label != placeholder_label:
                             placeholder.label = placeholder_label
                         if item.get("description") and placeholder.description != item.get("description"):
                             placeholder.description = item.get("description")
-                        logger.info(f"找到全局占位符 {placeholder_key}，将关联到场景")
+                        logger.info("找到全局占位符 %s，将关联到场景", placeholder_key)
                     
                     placeholders_to_associate.append(placeholder)
                 
@@ -312,7 +314,7 @@ class SceneService:
                                 placeholder_id=placeholder.id
                             )
                         )
-                    logger.info(f"场景 {scene_code} 关联了 {len(placeholders_to_associate)} 个占位符")
+                    logger.info("场景 %s 关联了 %d 个占位符", scene_code, len(placeholders_to_associate))
 
         try:
             await db.commit()

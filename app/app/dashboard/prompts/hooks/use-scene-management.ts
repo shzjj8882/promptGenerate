@@ -83,14 +83,14 @@ export function useSceneManagement({
         const uniquePlaceholdersMap = new Map<string, Placeholder>();
         for (const placeholder of allPlaceholders) {
           const key = placeholder.key;
-          const currentScene = (placeholder as any).scene || "";
+          const currentScene = placeholder.scene ?? "";
           
           if (!uniquePlaceholdersMap.has(key)) {
             uniquePlaceholdersMap.set(key, placeholder);
           } else {
             // 如果已存在，优先保留全局占位符（scene 为空字符串）
             const existing = uniquePlaceholdersMap.get(key)!;
-            const existingScene = (existing as any).scene || "";
+            const existingScene = existing.scene ?? "";
             if (currentScene === "" && existingScene !== "") {
               // 当前是全局占位符，替换现有的
               uniquePlaceholdersMap.set(key, placeholder);

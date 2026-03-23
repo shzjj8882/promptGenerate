@@ -141,7 +141,7 @@ export function usePromptDebug({
             const msg =
               err.detail ||
               err.message ||
-              (res.status === 429 ? "本月团队 token 配额已用完，请联系管理员扩容或续费" : `HTTP error! status: ${res.status}`);
+              (res.status === 429 ? "本月团队积点配额已用完，请联系管理员扩容或续费" : `HTTP error! status: ${res.status}`);
             setMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];

@@ -57,8 +57,9 @@ async def filter_by_team(
                 cached = await get_cache(cache_key)
                 if cached:
                     team_user_ids = json_loads(cached)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug("团队用户缓存读取失败: %s", e)
     
     # 如果缓存未命中，查询数据库
     if team_user_ids is None:
@@ -90,8 +91,9 @@ async def filter_by_team(
             try:
                 cache_ttl = CACHE_TTL.get("team_users", 300)
                 await set_cache(cache_key, json_dumps(team_user_ids), cache_ttl)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug("团队用户缓存写入失败: %s", e)
     
     if not team_user_ids:
         # 如果团队没有用户，返回空结果

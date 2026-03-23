@@ -68,7 +68,7 @@ class LLMModelResponse(LLMModelBase):
             if obj.extra_config:
                 try:
                     obj_dict['config'] = json.loads(obj.extra_config) if isinstance(obj.extra_config, str) else obj.extra_config
-                except:
+                except Exception:
                     obj_dict['config'] = None
             else:
                 obj_dict['config'] = None

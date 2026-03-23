@@ -15,9 +15,13 @@ from app.services.mcp_service import MCPService
 from app.services.mcp_llm_integration import chat_with_mcp_tools
 from app.services.team_quota_service import TeamQuotaService
 from app.services.team_usage_log_service import log_team_usage
+from app.services.team_service import TeamService
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# LLM 每次调用消耗的平台积点数（与 LLM token 无关，类似多维表格 TABLE_API_TOKENS_PER_CALL）
+POINTS_PER_LLM_CALL = 1
 
 
 def _get_llmchat_helpers():
@@ -45,12 +49,10 @@ async def check_llm_quota_before_stream(
     model = await LLMModelService.get_model_by_id(db, model_id)
     if not model:
         return
-    llm_config_raw = request_dict.get("llm_config") or {}
-    max_tokens = llm_config_raw.get("max_tokens") or model.default_max_tokens
     await TeamQuotaService.check_and_consume_tokens(
         db=db,
         team_id=team_id,
-        requested_tokens=max_tokens,
+        requested_tokens=POINTS_PER_LLM_CALL,
     )
 
 
@@ -120,6 +122,12 @@ async def execute_api_prompt_request(
     if not model_id:
         return None, "必须指定模型ID（model_id）"
 
+    # 异步任务从 Redis 读取时 team_id 可能丢失，用 team_code 兜底解析（确保配额扣减）
+    if not team_id and team_code:
+        team = await TeamService.get_team_by_code(db, team_code)
+        if team:
+            team_id = team.id
+
     model = await LLMModelService.get_model_by_id(db, model_id)
     if not model:
         return None, "指定的模型不存在"
@@ -139,13 +147,22 @@ async def execute_api_prompt_request(
     if model.default_max_tokens:
         llm_config.max_tokens = model.default_max_tokens
 
-    # 在创建 LLMService 之前先扣减当月 token 配额（若配置了团队与配额）；Admin 调试时跳过
-    if not skip_quota_check:
+    # 预扣时 API 已扣，此处跳过；否则扣减
+    skip = skip_quota_check or request_dict.get("_quota_pre_consumed") is True
+    consumed_here = not skip and team_id
+    if not skip:
         await TeamQuotaService.check_and_consume_tokens(
             db=db,
             team_id=team_id,
-            requested_tokens=llm_config.max_tokens,
+            requested_tokens=POINTS_PER_LLM_CALL,
         )
+
+    async def _refund_if_needed():
+        if consumed_here and not request_dict.get("_from_worker"):
+            try:
+                await TeamQuotaService.refund_points(db, team_id, POINTS_PER_LLM_CALL)
+            except Exception as ref_err:
+                logger.warning("配额退还失败 team_id=%s: %s", team_id, ref_err)
 
     llm_service = LLMService(
         api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
@@ -173,29 +190,33 @@ async def execute_api_prompt_request(
 
     try:
         if request_dict.get("mcp_id"):
-            mcp = await MCPService.get_by_id(db, request_dict["mcp_id"])
+            mcp = await MCPService.get_by_id_or_name(db, request_dict["mcp_id"], team_id=team_id)
             if not mcp:
+                await _refund_if_needed()
                 return None, "MCP 配置不存在"
             if team_id and mcp.team_id and mcp.team_id != team_id:
+                await _refund_if_needed()
                 return None, "MCP 配置不属于当前团队"
             tools_raw = mcp.tools_cache
             if isinstance(tools_raw, str):
                 try:
                     tools_raw = json.loads(tools_raw) if tools_raw else []
-                except Exception:
+                except Exception as e:
+                    logger.warning("MCP tools_cache 解析失败，mcp_id=%s: %s", mcp.id, e)
                     tools_raw = []
             mcp_tools = tools_raw or []
             if request_dict.get("mcp_tool_names"):
                 name_set = set(request_dict["mcp_tool_names"])
                 mcp_tools = [t for t in mcp_tools if t.get("name") in name_set]
             if not mcp_tools:
+                await _refund_if_needed()
                 return None, "未找到可用的 MCP 工具"
             auth_info = None
             if mcp.auth_info:
                 try:
                     auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp.id, e)
             mcp_transport = getattr(mcp, "transport_type", None) or "sse"
             response_text = await chat_with_mcp_tools(
                 llm_service=llm_service,
@@ -207,7 +228,6 @@ async def execute_api_prompt_request(
                 temperature=llm_config.temperature or 0.3,
                 max_tokens=llm_config.max_tokens,
             )
-            tokens_to_log = llm_config.max_tokens or 512  # MCP 多轮调用无汇总 usage，用 max_tokens 近似
         else:
             response = await llm_service.chat(
                 messages=messages,
@@ -219,21 +239,18 @@ async def execute_api_prompt_request(
                 if response.get("choices") and len(response["choices"]) > 0
                 else ""
             )
-            usage_info = response.get("usage") or {}
-            tokens_to_log = usage_info.get("total_tokens") or (
-                (usage_info.get("prompt_tokens") or 0) + (usage_info.get("completion_tokens") or 0)
-            ) or (llm_config.max_tokens or 512)
-        # 用量统计：5=组合 LLM、接口查询（记录实际 token 消耗，供按日/按业务统计）
-        if team_id:
+        # 用量统计：预扣时 API 已记录，此处不再重复；否则记录
+        if team_id and not request_dict.get("_quota_pre_consumed"):
             await log_team_usage(
                 db, team_id, usage_type=5,
-                tokens_used=tokens_to_log or 0,
+                tokens_used=POINTS_PER_LLM_CALL,
                 extra_info=json.dumps({"scene": scene, "mode": "api_sync"}),
-                business_name="组合LLM接口",
+                business_name="组合接口",
             )
             await db.commit()
         return response_text, None
     except Exception as e:
+        await _refund_if_needed()
         return None, str(e)
 
 
@@ -340,7 +357,7 @@ async def stream_llm_chat_request(
     full_response = ""
     try:
         if request_dict.get("mcp_id"):
-            mcp = await MCPService.get_by_id(db, request_dict["mcp_id"])
+            mcp = await MCPService.get_by_id_or_name(db, request_dict["mcp_id"], team_id=team_id)
             if not mcp:
                 yield json.dumps({"error": "MCP 配置不存在"}, ensure_ascii=False) + "\n\n"
                 return
@@ -351,7 +368,8 @@ async def stream_llm_chat_request(
             if isinstance(tools_raw, str):
                 try:
                     tools_raw = json.loads(tools_raw) if tools_raw else []
-                except Exception:
+                except Exception as e:
+                    logger.warning("MCP tools_cache 解析失败，mcp_id=%s: %s", mcp.id, e)
                     tools_raw = []
             mcp_tools = tools_raw or []
             if request_dict.get("mcp_tool_names"):
@@ -364,8 +382,8 @@ async def stream_llm_chat_request(
             if mcp.auth_info:
                 try:
                     auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp.id, e)
             mcp_transport = getattr(mcp, "transport_type", None) or "sse"
             full_response = await chat_with_mcp_tools(
                 llm_service=llm_service,
@@ -387,12 +405,11 @@ async def stream_llm_chat_request(
             ):
                 full_response += chunk
                 yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
-        # 用量统计：5=组合 LLM、接口查询（流式无 usage 时用 max_tokens 近似，与 consume 一致）
+        # 用量统计：5=组合 LLM、接口查询（记录平台积点消耗，非 LLM token）
         if team_id:
-            tokens_to_log = llm_config.max_tokens or 512
             await log_team_usage(
                 db, team_id, usage_type=5,
-                tokens_used=tokens_to_log,
+                tokens_used=POINTS_PER_LLM_CALL,
                 extra_info=json.dumps({"scene": scene, "mode": "api_stream"}),
                 business_name="组合LLM接口",
             )

@@ -144,7 +144,7 @@ async def get_menu_tree(
                     code=status.HTTP_200_OK
                 )
         except Exception as e:
-            logger.warning(f"菜单树缓存读取失败: {e}")
+            logger.warning("菜单树缓存读取失败: %s", e)
     
     # 直接传递 team_code，让服务层处理团队ID查询（避免重复查询）
     root_perms, children_map = await PermissionService.get_menu_tree(
@@ -186,7 +186,7 @@ async def get_menu_tree(
             await set_cache(cache_key, json.dumps(tree_data), CACHE_TTL["menu_tree"])
         except Exception as e:
             logger = logging.getLogger(__name__)
-            logger.warning(f"菜单树缓存写入失败: {e}")
+            logger.warning("菜单树缓存写入失败: %s", e)
     
     return ResponseModel.success_response(
         data=tree_data,
@@ -370,7 +370,7 @@ async def update_menu_config(
                 # 团队配置更新，只清除该团队的缓存
                 await delete_cache_pattern(f"{cache_prefix}*team:{current_user.team_code}*")
         except Exception as e:
-            logger.warning(f"清除菜单树缓存失败: {e}")
+            logger.warning("清除菜单树缓存失败: %s", e)
     
     return ResponseModel.success_response(
         data={

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
@@ -13,6 +13,7 @@ import {
 import { ApiError } from "@/lib/api/config";
 import { useErrorHandler } from "@/hooks/use-error-handler";
 import { useFormDialog } from "@/hooks/use-form-dialog";
+import { useDeleteConfirm } from "@/hooks/use-delete-confirm";
 import { logger } from "@/lib/utils/logger";
 
 const teamSchema = yup.object({
@@ -59,9 +60,18 @@ export function useTeamForm({
     reset: resetFormDialog,
   } = useFormDialog<Team>();
 
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const deleteConfirm = useDeleteConfirm<Team>({
+    onConfirm: async (team) => {
+      await deleteTeam(team.id);
+      setError("");
+      if (teams.length === 1 && currentPage > 1) {
+        setCurrentPage(currentPage - 1);
+      } else {
+        await fetchTeams(currentPage);
+      }
+    },
+    onClose: () => setError(""),
+  });
 
   const {
     register,
@@ -113,44 +123,17 @@ export function useTeamForm({
     [editingTeam, currentPage, closeFormDialog, resetFormDialog, fetchTeams]
   );
 
-  const handleDeleteClick = useCallback((team: Team) => {
-    setTeamToDelete(team);
-    setDeleteDialogOpen(true);
-  }, []);
-
-  const handleConfirmDelete = useCallback(
-    async () => {
-      if (!teamToDelete) return;
-      try {
-        setDeleteLoading(teamToDelete.id);
-        await deleteTeam(teamToDelete.id);
-        setDeleteDialogOpen(false);
-        setTeamToDelete(null);
-        setError("");
-        if (teams.length === 1 && currentPage > 1) {
-          setCurrentPage(currentPage - 1);
-        } else {
-          await fetchTeams(currentPage);
-        }
-      } catch (err) {
-        if (err instanceof ApiError) {
-          handleError(err, err.message, { showToast: false });
-        } else {
-          handleError(err, "删除团队失败，请稍后重试", { showToast: false });
-        }
-      } finally {
-        setDeleteLoading(null);
+  const handleConfirmDelete = useCallback(async () => {
+    try {
+      await deleteConfirm.handleConfirm();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        handleError(err, err.message, { showToast: false });
+      } else {
+        handleError(err, "删除团队失败，请稍后重试", { showToast: false });
       }
-    },
-    [
-      teamToDelete,
-      teams.length,
-      currentPage,
-      setCurrentPage,
-      fetchTeams,
-      handleError,
-    ]
-  );
+    }
+  }, [deleteConfirm.handleConfirm, handleError]);
 
   const closeDialog = useCallback(() => {
     closeFormDialog();
@@ -169,15 +152,15 @@ export function useTeamForm({
     openFormDialog,
     closeFormDialog,
     closeDialog,
-    deleteDialogOpen,
-    setDeleteDialogOpen,
-    teamToDelete,
-    setTeamToDelete,
-    deleteLoading,
+    deleteDialogOpen: deleteConfirm.open,
+    setDeleteDialogOpen: deleteConfirm.setOpen,
+    teamToDelete: deleteConfirm.itemToDelete,
+    setTeamToDelete: () => {}, // no-op, useDeleteConfirm manages internally
+    deleteLoading: deleteConfirm.loading ? deleteConfirm.itemToDelete?.id ?? null : null,
     handleCreate,
     handleEdit,
     onSubmit,
-    handleDeleteClick,
+    handleDeleteClick: deleteConfirm.handleDeleteClick,
     handleConfirmDelete,
   };
 }

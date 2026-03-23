@@ -231,7 +231,7 @@ function TenantsClientImpl({
   return (
     <div className="flex h-full flex-col gap-6">
       <PageHeader
-        title="租户管理"
+        title="租户信息"
         description="管理系统中的所有租户"
         action={null /* 迁移到表格工具栏右侧 */}
       />
@@ -368,14 +368,7 @@ function TenantsClientImpl({
       {/* 删除确认对话框 */}
       <DeleteConfirmDialog
         open={tenantDelete.deleteDialogOpen}
-        onOpenChange={(open) => {
-          tenantDelete.setDeleteDialogOpen(open);
-          if (!open) {
-            tenantDelete.setDeleteConfirmName("");
-            tenantDelete.setHasRelatedData(false);
-            tenantDelete.setError("");
-          }
-        }}
+        onOpenChange={tenantDelete.setDeleteDialogOpen}
         title="确认删除"
         description={`确定要删除租户 ${tenantDelete.tenantToDelete?.name || ""} 吗？`}
         itemName={tenantDelete.tenantToDelete?.name}

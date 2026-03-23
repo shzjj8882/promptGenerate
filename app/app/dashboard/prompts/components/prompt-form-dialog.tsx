@@ -193,7 +193,7 @@ export const PromptFormDialog = memo(function PromptFormDialog({
                   <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
                     {placeholders.map((p) => {
                       const placeholderText = formatPlaceholderText(p);
-                      const dataSourceType = (p as any).data_source_type || "user_input";
+                      const dataSourceType = p.data_source_type ?? "user_input";
                       const isTableType = dataSourceType === "multi_dimension_table";
                       
                       return (

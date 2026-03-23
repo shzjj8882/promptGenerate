@@ -1,26 +1,21 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+/**
+ * 防抖 Hooks - 基于 use-debounce 库
+ * @see https://github.com/xnimorz/use-debounce
+ */
+
+import { useDebounce as useDebounceLib } from "use-debounce";
+import { useDebouncedCallback as useDebouncedCallbackLib } from "use-debounce";
 
 /**
- * 防抖 Hook
+ * 防抖 Hook（值）
  * @param value 需要防抖的值
  * @param delay 延迟时间（毫秒）
  * @returns 防抖后的值
  */
 export function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [value, delay]);
-
+  const [debouncedValue] = useDebounceLib(value, delay);
   return debouncedValue;
 }
 
@@ -28,32 +23,11 @@ export function useDebounce<T>(value: T, delay: number): T {
  * 防抖回调 Hook
  * @param callback 需要防抖的回调函数
  * @param delay 延迟时间（毫秒）
- * @returns 防抖后的回调函数
+ * @returns 防抖后的回调函数（含 cancel、flush、isPending 方法）
  */
-export function useDebouncedCallback<T extends (...args: any[]) => any>(
+export function useDebouncedCallback<T extends (...args: Parameters<T>) => ReturnType<T>>(
   callback: T,
   delay: number
 ): T {
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  const debouncedCallback = ((...args: Parameters<T>) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-
-    timeoutRef.current = setTimeout(() => {
-      callback(...args);
-      timeoutRef.current = null;
-    }, delay);
-  }) as T;
-
-  return debouncedCallback;
+  return useDebouncedCallbackLib(callback, delay) as unknown as T;
 }

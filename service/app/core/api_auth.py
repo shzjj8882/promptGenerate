@@ -7,11 +7,41 @@
 4. 如果三者都未配置/提供，则无需鉴权（开发环境）
 """
 from fastapi import Header, HTTPException, status, Depends, Request
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.team_service import TeamService
+
+if TYPE_CHECKING:
+    from app.models.user import User
+
+
+async def _verify_bearer_and_get_user(
+    db: AsyncSession,
+    request: Request,
+) -> Optional["User"]:
+    """
+    解析 Authorization Bearer Token，校验并返回对应用户。
+    若未提供或校验失败，返回 None。
+    """
+    authorization = request.headers.get("Authorization")
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization.replace("Bearer ", "").strip()
+    if not token:
+        return None
+    from app.core.security import verify_token
+    from app.services.user_service import UserService
+
+    payload = verify_token(token)
+    if payload is None:
+        return None
+    username: str = payload.get("sub")
+    if not username:
+        return None
+    user = await UserService.get_user_by_username(db, username)
+    return user
 
 
 async def verify_optional_api_key(
@@ -40,21 +70,9 @@ async def verify_optional_api_key(
         return
     
     # 2. 如果没有配置 API_KEY，检查 Bearer Token（调试场景）
-    authorization = request.headers.get("Authorization")
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "").strip()
-        if token:
-            from app.core.security import verify_token
-            from app.services.user_service import UserService
-            
-            payload = verify_token(token)
-            if payload is not None:
-                username: str = payload.get("sub")
-                if username:
-                    user = await UserService.get_user_by_username(db, username)
-                    if user:
-                        # Bearer Token 验证成功，允许访问
-                        return
+    user = await _verify_bearer_and_get_user(db, request)
+    if user:
+        return
     
     # 3. 如果没有 Bearer Token 或验证失败，检查团队认证码
     if x_team_authcode:
@@ -88,21 +106,11 @@ async def get_team_code_from_auth(
         team = await TeamService.get_team_by_authcode(db, x_team_authcode.strip())
         if team:
             return team.code
-    authorization = request.headers.get("Authorization")
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "").strip()
-        if token:
-            from app.core.security import verify_token
-            from app.services.user_service import UserService
-            payload = verify_token(token)
-            if payload is not None:
-                username: str = payload.get("sub")
-                if username:
-                    user = await UserService.get_user_by_username(db, username)
-                    if user and user.team_id:
-                        team = await TeamService.get_team_by_id(db, user.team_id)
-                        if team:
-                            return team.code
+    user = await _verify_bearer_and_get_user(db, request)
+    if user and user.team_id:
+        team = await TeamService.get_team_by_id(db, user.team_id)
+        if team:
+            return team.code
     return None
 
 
@@ -132,20 +140,9 @@ async def get_team_id_from_auth(
         return None
     
     # 3. 检查 Bearer Token（调试场景）
-    authorization = request.headers.get("Authorization")
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "").strip()
-        if token:
-            from app.core.security import verify_token
-            from app.services.user_service import UserService
-            
-            payload = verify_token(token)
-            if payload is not None:
-                username: str = payload.get("sub")
-                if username:
-                    user = await UserService.get_user_by_username(db, username)
-                    if user and user.team_id:
-                        return user.team_id
-    
+    user = await _verify_bearer_and_get_user(db, request)
+    if user and user.team_id:
+        return user.team_id
+
     # 4. 如果都没有，返回 None
     return None

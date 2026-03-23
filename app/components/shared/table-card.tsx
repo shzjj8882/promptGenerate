@@ -50,7 +50,7 @@ export const TableCard = memo(function TableCard({
             CARD_ICON_VARIANTS.table
           )}
         >
-          <TableFile theme="outline" size={24} fill="#333" strokeLinejoin="miter" />
+          <TableFile theme="outline" size={24} fill="currentColor" strokeLinejoin="miter" />
         </div>
       </div>
       {/* 右列：文本 + 操作放在同一格里，避免多子元素导致第二行高度异常 */}
@@ -64,23 +64,15 @@ export const TableCard = memo(function TableCard({
             </p>
           )}
           {table.columns && table.columns.length > 0 ? (
-            <div className="mb-2">
+            <div className="mb-2 min-w-0">
               <p className={cn(TYPOGRAPHY.caption, "mb-1")}>字段：</p>
-              <div className="flex flex-wrap gap-1">
-                {table.columns.slice(0, 10).map((col) => (
-                  <span
-                    key={col.key}
-                    className={cn(TYPOGRAPHY.caption, "px-1.5 py-0.5 bg-muted rounded whitespace-nowrap")}
-                  >
-                    {col.label}
-                  </span>
-                ))}
-                {table.columns.length > 10 && (
-                  <span className={cn(TYPOGRAPHY.caption, "px-1.5 py-0.5 bg-muted rounded")}>
-                    +{table.columns.length - 10}
-                  </span>
-                )}
-              </div>
+              <p
+                className={cn(TYPOGRAPHY.caption, "truncate")}
+                title={table.columns.map((c) => c.label).join(", ")}
+              >
+                {table.columns.slice(0, 10).map((col) => col.label).join("、")}
+                {table.columns.length > 10 ? ` +${table.columns.length - 10}` : ""}
+              </p>
             </div>
           ) : (
             <p className={cn(TYPOGRAPHY.caption, "mb-2")}>暂无字段</p>

@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     # 应用接口 /api 可选鉴权：设置后请求头需带 X-API-Key: <API_KEY>，不设置则 /api 无需鉴权
     API_KEY: str = Field(default="", description="可选，设置后 /api 接口需在请求头携带 X-API-Key")
     
+    # 日志：LOG_JSON_FORMAT=true 时输出 JSON 格式（便于生产环境采集）
+    LOG_JSON_FORMAT: bool = Field(default=False, description="日志 JSON 格式")
+
+    # 请求体限制（防止超大请求耗尽资源）
+    REQUEST_USER_MESSAGE_MAX_LENGTH: int = Field(default=50000, description="user_message 最大字符数")
+    REQUEST_ADDITIONAL_PARAMS_MAX_BYTES: int = Field(default=102400, description="additional_params JSON 最大字节数（约 100KB）")
+    REQUEST_BODY_MAX_BYTES: int = Field(default=1048576, description="请求体全局最大字节数（默认 1MB），0 表示不限制")
+
+    # API 限流：格式如 "100/minute" 或 "10/second"，空字符串表示不启用
+    RATE_LIMIT: str = Field(default="60/minute", description="API 限流，如 60/minute，空则禁用")
+
     # DeepSeek API 配置
     DEEPSEEK_API_KEY: str = Field(default="", description="DeepSeek API密钥")
     DEEPSEEK_API_BASE: str = Field(default="https://api.deepseek.com/v1", description="DeepSeek API基础URL")

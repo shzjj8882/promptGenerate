@@ -151,9 +151,9 @@ class UserService:
             redis_client = await get_redis_optional()
             if redis_client:
                 await RoleService.invalidate_user_perm_cache(redis_client, user.id)
-        except Exception:
-            # 缓存相关错误不影响主流程
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("失效用户权限缓存失败，user_id=%s: %s", user.id, e)
         
         return user
     

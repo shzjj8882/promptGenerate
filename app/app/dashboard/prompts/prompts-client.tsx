@@ -274,7 +274,7 @@ function PromptsClientImpl({ initialTenants, initialPrompts }: PromptsClientProp
       {/* 顶部操作栏 */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">提示词管理</h2>
+          <h2 className="text-2xl font-bold tracking-tight">提示词</h2>
           <p className="text-muted-foreground">
             创建和管理提示词模板，支持多场景、多租户配置
           </p>

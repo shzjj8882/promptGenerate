@@ -901,7 +901,7 @@ class RoleService:
             except Exception as e:
                 # 其他错误，记录日志但继续
                 logger = logging.getLogger(__name__)
-                logger.warning(f"缓存读取失败，key={cache_key}: {e}")
+                logger.warning("缓存读取失败，key=%s: %s", cache_key, e)
         user_row = await db.execute(select(User).where(User.id == user_id))
         user = user_row.scalar_one_or_none()
         if not user:
@@ -1025,7 +1025,7 @@ class RoleService:
             except Exception as e:
                 # 其他错误，记录日志但继续
                 logger = logging.getLogger(__name__)
-                logger.warning(f"缓存写入失败，key={cache_key}: {e}")
+                logger.warning("缓存写入失败，key=%s: %s", cache_key, e)
         return out
 
     @staticmethod
@@ -1075,7 +1075,7 @@ class RoleService:
                 pass
             except Exception as e:
                 logger = logging.getLogger(__name__)
-                logger.warning(f"批量缓存读取失败: {e}")
+                logger.warning("批量缓存读取失败: %s", e)
         
         # 查询未命中缓存的用户权限
         missing_user_ids = [user_id for user_id in user_ids if user_id not in result]
@@ -1175,7 +1175,7 @@ class RoleService:
                     pass
                 except Exception as e:
                     logger = logging.getLogger(__name__)
-                    logger.warning(f"批量缓存写入失败: {e}")
+                    logger.warning("批量缓存写入失败: %s", e)
         
         return result
 
@@ -1193,7 +1193,7 @@ class RoleService:
             pass
         except Exception as e:
             logger = logging.getLogger(__name__)
-            logger.warning(f"删除权限缓存失败，user_id={user_id}: {e}")
+            logger.warning("删除权限缓存失败，user_id=%s: %s", user_id, e)
 
     @staticmethod
     async def get_user_ids_for_role(db: AsyncSession, role_id: str) -> List[str]:
@@ -1234,7 +1234,7 @@ class RoleService:
             pass
         except Exception as e:
             logger = logging.getLogger(__name__)
-            logger.warning(f"批量删除权限缓存失败，role_id={role_id}: {e}")
+            logger.warning("批量删除权限缓存失败，role_id=%s: %s", role_id, e)
 
     @staticmethod
     async def get_user_menu_permission_codes(db: AsyncSession, user_id: str) -> List[str]:

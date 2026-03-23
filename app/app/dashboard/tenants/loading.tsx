@@ -3,7 +3,7 @@ import { PageTableLoadingSkeleton } from "@/components/shared/page-loading-skele
 export default function TenantsLoading() {
   return (
     <PageTableLoadingSkeleton
-      title="租户管理"
+      title="租户信息"
       description="管理系统中的所有租户"
       tableCols={4}
       showSearchBar={true}

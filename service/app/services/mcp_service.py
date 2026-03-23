@@ -2,14 +2,21 @@
 MCP 配置服务
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, case
 from typing import List, Optional, Dict, Any
 import json
 import logging
 
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.models.mcp import MCPConfig
+
+_HTTP_RETRY = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+)
 from app.schemas.mcp import MCPConfigCreate, MCPConfigUpdate
 
 logger = logging.getLogger(__name__)
@@ -32,6 +39,7 @@ def _build_auth_headers(auth_info: Optional[Dict[str, Any]]) -> dict:
     return headers
 
 
+@_HTTP_RETRY
 async def _fetch_mcp_tools(
     url: str,
     auth_info: Optional[Dict[str, Any]] = None,
@@ -49,7 +57,7 @@ async def _fetch_mcp_tools(
         except ImportError:
             streamable_http_client = None
     except ImportError as e:
-        logger.warning(f"MCP SDK 未安装，无法连接 MCP 服务: {e}")
+        logger.warning("MCP SDK 未安装，无法连接 MCP 服务: %s", e)
         raise ValueError(
             "MCP SDK 未安装。MCP 需 Python 3.10+，请在项目 service 目录下执行: "
             "pip install -r requirements-mcp.txt ；或使用 Docker 部署。"
@@ -107,6 +115,7 @@ async def _fetch_mcp_tools(
     return all_tools
 
 
+@_HTTP_RETRY
 async def call_mcp_tool(
     url: str,
     tool_name: str,
@@ -227,6 +236,46 @@ class MCPService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    def _looks_like_uuid(s: str) -> bool:
+        """判断字符串是否为 UUID 格式"""
+        if not s or len(s) != 36:
+            return False
+        try:
+            import uuid as uuid_mod
+            uuid_mod.UUID(s)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
+    async def get_by_id_or_name(
+        db: AsyncSession,
+        mcp_id_or_name: str,
+        team_id: Optional[str] = None,
+    ) -> Optional[MCPConfig]:
+        """
+        根据 ID 或名称获取 MCP 配置。
+        - 若为 UUID 格式则按 ID 查询
+        - 否则按名称查询（在团队+全局范围内，优先团队配置）
+        """
+        if MCPService._looks_like_uuid(mcp_id_or_name):
+            return await MCPService.get_by_id(db, mcp_id_or_name)
+        # 按名称查询：团队配置优先，其次全局
+        conditions = [MCPConfig.name == mcp_id_or_name, MCPConfig.is_active == True]
+        if team_id:
+            q = (
+                select(MCPConfig)
+                .where(and_(*conditions))
+                .where(or_(MCPConfig.team_id == team_id, MCPConfig.team_id.is_(None)))
+                .order_by(case((MCPConfig.team_id == team_id, 0), else_=1))  # 团队配置优先
+                .limit(1)
+            )
+        else:
+            q = select(MCPConfig).where(and_(*conditions)).where(MCPConfig.team_id.is_(None)).limit(1)
+        result = await db.execute(q)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def list_mcps(
         db: AsyncSession,
         team_id: Optional[str] = None,
@@ -305,12 +354,14 @@ class MCPService:
                 if mcp.auth_info:
                     try:
                         auth_info = json.loads(mcp.auth_info)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp_id, e)
                         auth_info = None
             elif isinstance(auth_info, str):
                 try:
                     auth_info = json.loads(auth_info) if auth_info else None
-                except Exception:
+                except Exception as e:
+                    logger.warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp_id, e)
                     auth_info = None
             success, _, tools = await MCPService.verify_connection(url, auth_info, transport_type)
             if success and tools:
@@ -333,8 +384,8 @@ class MCPService:
         if mcp.auth_info:
             try:
                 auth_info = json.loads(mcp.auth_info)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp_id, e)
         transport_type = getattr(mcp, "transport_type", None) or TRANSPORT_SSE
         success, _, tools = await MCPService.verify_connection(mcp.url, auth_info, transport_type)
         if not success:

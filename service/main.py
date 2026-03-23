@@ -5,13 +5,40 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import HTTPException as FastAPIHTTPException
 from sqlalchemy import text, select, func
 from sqlalchemy.exc import IntegrityError
+
 from app.core.config import settings
+
+# slowapi 为可选依赖：未安装时禁用限流，应用可正常启动
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.middleware import SlowAPIMiddleware
+    from slowapi.errors import RateLimitExceeded
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _SLOWAPI_AVAILABLE = False
+
+# 无操作限流器（slowapi 未安装时使用）
+class _NoOpLimiter:
+    def exempt(self, fn):
+        return fn
+
+
+# API 限流：RATE_LIMIT 为空或 slowapi 未安装则禁用
+_default_limits = [settings.RATE_LIMIT] if (settings.RATE_LIMIT and settings.RATE_LIMIT.strip()) else []
+if _SLOWAPI_AVAILABLE and _default_limits:
+    limiter = Limiter(key_func=get_remote_address, default_limits=_default_limits)
+else:
+    limiter = _NoOpLimiter()
+
 from app.core.database import init_db, engine, AsyncSessionLocal
 from app.core.response import ResponseModel
-from app.core.middleware import RequestIDAndAuditMiddleware
+from app.core.middleware import RequestIDAndAuditMiddleware, LimitRequestBodyMiddleware
+from app.core.logging_config import configure_logging
 from app.routers import admin, api
 from app.models.user import User
 from app.core.security import get_password_hash
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,18 +79,29 @@ tags_metadata = [
     },
 ]
 
+# 生产环境关闭 Swagger/ReDoc，避免暴露 API 结构
+_docs_url = "/docs" if settings.ENV.lower() != "production" else None
+_redoc_url = "/redoc" if settings.ENV.lower() != "production" else None
+_openapi_url = "/openapi.json" if settings.ENV.lower() != "production" else None
+
 app = FastAPI(
     title="AILY API",
     description="AILY 提示词管理服务 - 支持销售打单、调研、PPT报告等业务场景",
     version="1.0.0",
-    docs_url="/docs",  # Swagger UI 路径
-    redoc_url="/redoc",  # ReDoc 路径
-    openapi_url="/openapi.json",  # OpenAPI JSON 路径
-    openapi_tags=tags_metadata,  # 标签元数据
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
+    openapi_tags=tags_metadata,
 )
+if _SLOWAPI_AVAILABLE and _default_limits:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
 # 请求 ID + 管理端变更审计日志（先添加的后执行，故先于 CORS 接触请求）
 app.add_middleware(RequestIDAndAuditMiddleware)
+# 请求体大小限制（根据 Content-Length 提前拒绝超大请求）
+app.add_middleware(LimitRequestBodyMiddleware)
 # CORS 配置
 app.add_middleware(
     CORSMiddleware,
@@ -150,12 +188,36 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(admin.router, prefix="/admin")
 app.include_router(api.router, prefix="/api")
 
+# Prometheus 指标端点（/metrics，免限流）
+@app.get("/metrics")
+@limiter.exempt
+async def metrics():
+    """Prometheus 格式指标，供监控系统采集"""
+    try:
+        from prometheus_client import REGISTRY, generate_latest, CONTENT_TYPE_LATEST
+        from starlette.responses import Response
+        return Response(
+            content=generate_latest(REGISTRY),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+    except ImportError:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            content={
+                "status": "ok",
+                "metrics": "disabled",
+                "prompt": "pip install prometheus-client for Prometheus metrics",
+            },
+            status_code=status.HTTP_200_OK,
+        )
+
 
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化数据库"""
-    # 配置应用日志（INFO 级别，便于查看 LLMChatTask 等任务状态）
-    logging.getLogger("app").setLevel(logging.INFO)
+    # 统一日志格式（含 request_id），可通过 LOG_JSON_FORMAT=true 启用 JSON 格式
+    json_format = getattr(settings, "LOG_JSON_FORMAT", False)
+    configure_logging(json_format=bool(json_format), log_level=logging.INFO)
 
     # 注意：这里假设数据库已经存在
     # 如果数据库不存在，请先运行 python3 scripts/init_db.py 创建数据库
@@ -190,12 +252,26 @@ async def startup_event():
                     await delete_cache_pattern(f"{CACHE_KEY_PREFIXES['user_perm']}*")
                     logger.info("菜单树与用户权限缓存已清除")
             except Exception as cache_err:
-                logger.warning(f"清除菜单树缓存失败（可忽略）: {cache_err}")
+                logger.warning("清除菜单树缓存失败（可忽略）: %s", cache_err)
         except Exception as e:
-            logger.exception(f"启动时执行 RBAC / 菜单迁移脚本失败: {e}")
+            logger.exception("启动时执行 RBAC / 菜单迁移脚本失败: %s", e)
 
     # 初始化默认系统管理员账号（如不存在）
     await initialize_default_admin()
+
+    # 可选依赖与功能状态日志
+    if _default_limits and not _SLOWAPI_AVAILABLE:
+        logger.warning(
+            "RATE_LIMIT=%s 已配置，但 slowapi 未安装，限流已禁用。安装: pip install slowapi",
+            settings.RATE_LIMIT,
+        )
+    elif _SLOWAPI_AVAILABLE and _default_limits:
+        logger.info("API 限流已启用: %s", settings.RATE_LIMIT)
+    try:
+        import prometheus_client  # noqa: F401
+        logger.info("Prometheus 指标已启用: GET /metrics")
+    except ImportError:
+        logger.info("prometheus-client 未安装，/metrics 返回占位信息。安装: pip install prometheus-client")
 
 
 async def initialize_default_admin():
@@ -255,6 +331,7 @@ async def shutdown_event():
 
 
 @app.get("/")
+@limiter.exempt
 async def root():
     """根路径"""
     return ResponseModel.success_response(
@@ -264,32 +341,56 @@ async def root():
 
 
 @app.get("/health")
+@limiter.exempt
 async def health_check():
-    """健康检查：数据库与 Redis 连通性"""
+    """
+    健康检查：数据库与 Redis 连通性
+    - 全部正常返回 200，degraded 时返回 503（便于负载均衡摘除）
+    - 包含 version、checks、timestamp
+    """
+    from datetime import datetime, timezone
+
     db_ok = "ok"
+    db_latency_ms: Optional[float] = None
     try:
+        import time
+        t0 = time.perf_counter()
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+        db_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
     except Exception:
         db_ok = "unavailable"
 
     redis_ok = "ok"
+    redis_latency_ms: Optional[float] = None
     try:
+        import time
         from app.core.database import redis_client
         if redis_client:
+            t0 = time.perf_counter()
             await redis_client.ping()
+            redis_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
         else:
             redis_ok = "unavailable"
     except Exception:
         redis_ok = "unavailable"
 
     healthy = db_ok == "ok" and redis_ok == "ok"
-    return ResponseModel.success_response(
-        data={
-            "status": "healthy" if healthy else "degraded",
-            "database": db_ok,
-            "redis": redis_ok,
+    data = {
+        "status": "healthy" if healthy else "degraded",
+        "version": "1.0.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "checks": {
+            "database": {"status": db_ok, "latency_ms": db_latency_ms},
+            "redis": {"status": redis_ok, "latency_ms": redis_latency_ms},
         },
-        message="服务健康" if healthy else "数据库或 Redis 不可用"
+    }
+    status_code = status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    return JSONResponse(
+        content=ResponseModel.success_response(
+            data=data,
+            message="服务健康" if healthy else "数据库或 Redis 不可用",
+        ).model_dump(exclude_none=True),
+        status_code=status_code,
     )
 

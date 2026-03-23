@@ -1,15 +1,10 @@
 "use client";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DialogFooter } from "@/components/ui/dialog";
+import { FormDialogShell } from "@/components/shared/form-dialog-shell";
 import type { Team } from "@/lib/api/teams";
 import type { TeamFormData } from "../hooks/use-team-form";
 import type { UseFormRegister, FieldErrors, UseFormHandleSubmit } from "react-hook-form";
@@ -40,71 +35,68 @@ export function TeamFormDialog({
   onClose,
 }: TeamFormDialogProps) {
   return (
-    <Dialog
+    <FormDialogShell
       open={open}
-      onOpenChange={(open) => {
-        if (!open) onClose();
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (!next) onClose();
       }}
+      title={editingTeam ? "编辑团队" : "新建团队"}
+      description={
+        editingTeam
+          ? "修改团队信息（团队代码不可修改）"
+          : "创建一个新的团队"
+      }
+      error={error}
+      contentClassName="max-w-md"
+      footer={
+        <DialogFooter className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button type="submit" form="team-form-dialog-form" disabled={isSubmitting}>
+            {isSubmitting ? "保存中..." : "保存"}
+          </Button>
+        </DialogFooter>
+      }
     >
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{editingTeam ? "编辑团队" : "新建团队"}</DialogTitle>
-          <DialogDescription>
-            {editingTeam
-              ? "修改团队信息（团队代码不可修改）"
-              : "创建一个新的团队"}
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="code">团队代码 *</Label>
-            <Input
-              id="code"
-              placeholder="例如: team001"
-              {...register("code")}
-              className={errors.code ? "border-destructive" : ""}
-              disabled={!!editingTeam}
-            />
-            {errors.code && (
-              <p className="text-sm text-destructive">{errors.code.message}</p>
-            )}
-            {editingTeam && (
-              <p className="text-xs text-muted-foreground">
-                团队代码创建后不可修改
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="name">团队名称 *</Label>
-            <Input
-              id="name"
-              placeholder="请输入团队名称"
-              {...register("name")}
-              className={errors.name ? "border-destructive" : ""}
-            />
-            {errors.name && (
-              <p className="text-sm text-destructive">{errors.name.message}</p>
-            )}
-          </div>
-
-          {error && (
-            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-              {error}
-            </div>
+      <form
+        id="team-form-dialog-form"
+        onSubmit={handleSubmit(onSubmit)}
+        className="space-y-4"
+      >
+        <div className="space-y-2">
+          <Label htmlFor="code">团队代码 *</Label>
+          <Input
+            id="code"
+            placeholder="例如: team001"
+            {...register("code")}
+            className={errors.code ? "border-destructive" : ""}
+            disabled={!!editingTeam}
+          />
+          {errors.code && (
+            <p className="text-sm text-destructive">{errors.code.message}</p>
           )}
+          {editingTeam && (
+            <p className="text-xs text-muted-foreground">
+              团队代码创建后不可修改
+            </p>
+          )}
+        </div>
 
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              取消
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "保存中..." : "保存"}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        <div className="space-y-2">
+          <Label htmlFor="name">团队名称 *</Label>
+          <Input
+            id="name"
+            placeholder="请输入团队名称"
+            {...register("name")}
+            className={errors.name ? "border-destructive" : ""}
+          />
+          {errors.name && (
+            <p className="text-sm text-destructive">{errors.name.message}</p>
+          )}
+        </div>
+      </form>
+    </FormDialogShell>
   );
 }

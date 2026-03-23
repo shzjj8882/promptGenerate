@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Body, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Optional, Any, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.core.database import get_db
 from app.core.api_auth import get_team_code_from_auth
 from app.core.response import ResponseModel
@@ -15,6 +15,7 @@ from app.services.mcp_service import MCPService, TRANSPORT_SSE
 from app.services.mcp_llm_integration import chat_with_mcp_tools
 from app.services.team_quota_service import TeamQuotaService
 from app.services.team_usage_log_service import log_team_usage
+from app.services.llmchat_api_executor import POINTS_PER_LLM_CALL
 from app.core.config import settings
 import re
 import json
@@ -34,36 +35,60 @@ class LLMConfig(BaseModel):
     max_tokens: Optional[int] = Body(None, description="最大token数")
 
 
+def _validate_additional_params(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """校验 additional_params JSON 大小，防止超大请求"""
+    if v is None:
+        return {}
+    size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
+    if size > settings.REQUEST_ADDITIONAL_PARAMS_MAX_BYTES:
+        raise ValueError(
+            f"占位符参数过大（{size} 字节），最大允许 {settings.REQUEST_ADDITIONAL_PARAMS_MAX_BYTES} 字节"
+        )
+    return v
+
+
 class PromptConvertRequest(BaseModel):
     """提示词转换请求"""
     tenantCode: Optional[str] = Body(None, description="租户编号（当提示词包含需要租户信息的占位符时必填）")
     teamCode: Optional[str] = Body(None, description="团队代码（用于获取团队的默认提示词）")
     # 占位符参数：动态字段，key 为占位符的 key，value 为对应的值
-    # 使用 Dict[str, Any] 来接收任意占位符参数
     additional_params: Optional[Dict[str, Any]] = Body(default={}, description="占位符参数")
-    # LLM配置
     llm_config: Optional[LLMConfig] = Body(None, description="LLM配置，不传则使用环境变量配置")
-    # 用户消息
-    user_message: Optional[str] = Body(None, description="用户消息，如果提供则调用LLM生成回复")
+    user_message: Optional[str] = Body(
+        None,
+        max_length=settings.REQUEST_USER_MESSAGE_MAX_LENGTH,
+        description="用户消息，如果提供则调用LLM生成回复",
+    )
+
+    @field_validator("additional_params", mode="before")
+    @classmethod
+    def validate_additional_params(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return _validate_additional_params(v)
 
 
 class PromptChatRequest(BaseModel):
     """提示词聊天请求（流式）"""
     tenantCode: Optional[str] = Body(None, description="租户编号（当提示词包含需要租户信息的占位符时必填）")
     teamCode: Optional[str] = Body(None, description="团队代码（用于获取团队的默认提示词）")
-    # 占位符参数：动态字段，key 为占位符的 key，value 为对应的值
     additional_params: Optional[Dict[str, Any]] = Body(default={}, description="占位符参数")
-    # LLM配置
     llm_config: Optional[LLMConfig] = Body(None, description="LLM配置，不传则使用环境变量配置")
-    # 用户消息（必填）
-    user_message: str = Body(..., description="用户消息")
+    user_message: str = Body(
+        ...,
+        max_length=settings.REQUEST_USER_MESSAGE_MAX_LENGTH,
+        description="用户消息",
+    )
     # 会话ID（用于上下文）
     conversation_id: Optional[str] = Body(None, description="会话ID，如果提供则使用会话历史作为上下文")
     # 模型ID（用于指定使用的模型）
     model_id: Optional[str] = Body(None, description="模型ID，如果不提供则使用团队的默认模型")
     # MCP 配置（用于 LLM 调用 MCP 工具）
-    mcp_id: Optional[str] = Body(None, description="MCP 配置 ID，选择后 LLM 可调用该 MCP 的工具")
+    mcp_id: Optional[str] = Body(None, description="MCP 配置标识（ID 或名称），选择后 LLM 可调用该 MCP 的工具")
     mcp_tool_names: Optional[List[str]] = Body(None, description="勾选的 MCP 工具名称列表，为空则使用全部工具")
+
+    @field_validator("additional_params", mode="before")
+    @classmethod
+    def validate_additional_params(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return _validate_additional_params(v)
 
 
 class NotificationOption(BaseModel):
@@ -81,21 +106,26 @@ class PromptApiRequest(BaseModel):
     """提示词接口模式请求（非流式）"""
     tenantCode: Optional[str] = Body(None, description="租户编号（当提示词包含需要租户信息的占位符时必填）")
     teamCode: Optional[str] = Body(None, description="团队代码（用于获取团队的默认提示词）")
-    # 占位符参数：动态字段，key 为占位符的 key，value 为对应的值
     additional_params: Optional[Dict[str, Any]] = Body(default={}, description="占位符参数")
-    # LLM配置
     llm_config: Optional[LLMConfig] = Body(None, description="LLM配置，不传则使用环境变量配置")
-    # 用户消息（必填）
-    user_message: str = Body(..., description="用户消息")
+    user_message: str = Body(
+        ...,
+        max_length=settings.REQUEST_USER_MESSAGE_MAX_LENGTH,
+        description="用户消息",
+    )
     # 会话ID（用于上下文）
     conversation_id: Optional[str] = Body(None, description="会话ID，如果提供则使用会话历史作为上下文")
     # 模型ID（用于指定使用的模型）
     model_id: Optional[str] = Body(None, description="模型ID，如果不提供则使用团队的默认模型")
     # MCP 配置（用于 LLM 调用 MCP 工具）
-    mcp_id: Optional[str] = Body(None, description="MCP 配置 ID")
+    mcp_id: Optional[str] = Body(None, description="MCP 配置标识（ID 或名称）")
     mcp_tool_names: Optional[List[str]] = Body(None, description="勾选的 MCP 工具名称列表")
-    # 通知选项：无通知=同步，有通知=异步（返回 task_id，Worker 完成后发邮件）
     notification: Optional[NotificationOption] = Body(None, description="通知选项，不传或 type=none 则为同步模式")
+
+    @field_validator("additional_params", mode="before")
+    @classmethod
+    def validate_additional_params(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return _validate_additional_params(v)
 
 
 class PromptApiResponse(BaseModel):
@@ -773,13 +803,13 @@ async def chat_prompt(
     if model.extra_config:
         try:
             config_dict = json.loads(model.extra_config) if isinstance(model.extra_config, str) else model.extra_config
-        except:
+        except Exception:
             pass
-    # 在创建 LLMService 之前，按团队配额预扣一次本次请求的最大 token 数
+    # 在创建 LLMService 之前，按团队配额预扣本次请求的平台积点数（固定 1 点/次，非 LLM token）
     await TeamQuotaService.check_and_consume_tokens(
         db=db,
         team_id=team_id,
-        requested_tokens=llm_config.max_tokens,
+        requested_tokens=POINTS_PER_LLM_CALL,
     )
 
     llm_service = LLMService(
@@ -791,7 +821,7 @@ async def chat_prompt(
     if not llm_config.temperature and model.default_temperature:
         try:
             llm_config.temperature = float(model.default_temperature)
-        except:
+        except Exception:
             pass
     if not llm_config.max_tokens and model.default_max_tokens:
         llm_config.max_tokens = model.default_max_tokens
@@ -834,7 +864,7 @@ async def chat_prompt(
         try:
             # 若指定了 MCP，使用工具调用循环（非流式内部，最后流式输出结果）
             if request.mcp_id:
-                mcp = await MCPService.get_by_id(db, request.mcp_id)
+                mcp = await MCPService.get_by_id_or_name(db, request.mcp_id, team_id=team_id)
                 if not mcp:
                     yield f"data: {json.dumps({'error': 'MCP 配置不存在'}, ensure_ascii=False)}\n\n"
                     yield "data: [DONE]\n\n"
@@ -847,7 +877,9 @@ async def chat_prompt(
                 if isinstance(tools_raw, str):
                     try:
                         tools_raw = json.loads(tools_raw) if tools_raw else []
-                    except Exception:
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning("MCP tools_cache 解析失败，mcp_id=%s: %s", mcp.id, e)
                         tools_raw = []
                 mcp_tools = tools_raw or []
                 if request.mcp_tool_names:
@@ -861,8 +893,9 @@ async def chat_prompt(
                 if mcp.auth_info:
                     try:
                         auth_info = json.loads(mcp.auth_info) if isinstance(mcp.auth_info, str) else mcp.auth_info
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning("MCP auth_info 解析失败，mcp_id=%s: %s", mcp.id, e)
                 mcp_transport = getattr(mcp, "transport_type", None) or TRANSPORT_SSE
                 full_response = await chat_with_mcp_tools(
                     llm_service=llm_service,
@@ -934,12 +967,11 @@ async def chat_prompt(
                     }
                 ))
             
-            # 用量统计：5=组合 LLM、接口查询（流式无 usage 时用 max_tokens 近似，与 consume 一致）
+            # 用量统计：5=组合 LLM、接口查询（记录平台积点消耗，非 LLM token）
             if team_id:
-                tokens_to_log = llm_config.max_tokens or 512
                 await log_team_usage(
                     db, team_id, usage_type=5,
-                    tokens_used=tokens_to_log,
+                    tokens_used=POINTS_PER_LLM_CALL,
                     extra_info=json.dumps({"scene": scene, "mode": "prompt_chat"}),
                     business_name="组合LLM接口",
                 )
@@ -1071,6 +1103,12 @@ async def api_prompt(
             "mcp_tool_names": request.mcp_tool_names,
         }
         if notif.type == "email" and notif.email_to:
+            # 预扣积点，失败时 Worker 补偿退还
+            if team_id:
+                await TeamQuotaService.check_and_consume_tokens(
+                    db=db, team_id=team_id, requested_tokens=POINTS_PER_LLM_CALL
+                )
+                request_dict["_quota_pre_consumed"] = True
             notif_cfg = {
                 "email_to": notif.email_to,
                 "config_id": notif.config_id,
@@ -1128,6 +1166,12 @@ async def api_prompt(
         }
         if not request.model_id:
             raise HTTPException(status_code=400, detail="必须指定模型ID（model_id）")
+        # 预扣积点，失败时 Worker 补偿退还
+        if team_id:
+            await TeamQuotaService.check_and_consume_tokens(
+                db=db, team_id=team_id, requested_tokens=POINTS_PER_LLM_CALL
+            )
+            request_dict["_quota_pre_consumed"] = True
         task = await LLMChatTaskService.create_task(
             db=db,
             scene=scene,
@@ -1184,7 +1228,7 @@ async def api_prompt(
     if model.extra_config:
         try:
             config_dict = json.loads(model.extra_config) if isinstance(model.extra_config, str) else model.extra_config
-        except:
+        except Exception:
             pass
     llm_service = LLMService(
         api_key=model.api_key or getattr(settings, "DEEPSEEK_API_KEY", ""),
@@ -1195,7 +1239,7 @@ async def api_prompt(
     if not llm_config.temperature and model.default_temperature:
         try:
             llm_config.temperature = float(model.default_temperature)
-        except:
+        except Exception:
             pass
     if not llm_config.max_tokens and model.default_max_tokens:
         llm_config.max_tokens = model.default_max_tokens
@@ -1235,7 +1279,7 @@ async def api_prompt(
     # 7. 调用LLM获取完整回复并保存会话消息
     try:
         if request.mcp_id:
-            mcp = await MCPService.get_by_id(db, request.mcp_id)
+            mcp = await MCPService.get_by_id_or_name(db, request.mcp_id, team_id=team_id)
             if not mcp:
                 raise HTTPException(status_code=404, detail="MCP 配置不存在")
             if team_id and mcp.team_id and mcp.team_id != team_id:
@@ -1244,7 +1288,9 @@ async def api_prompt(
             if isinstance(tools_raw, str):
                 try:
                     tools_raw = json.loads(tools_raw) if tools_raw else []
-                except Exception:
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning("MCP tools_cache 解析失败，mcp_id=%s: %s", mcp.id, e)
                     tools_raw = []
             mcp_tools = tools_raw or []
             if request.mcp_tool_names:

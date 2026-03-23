@@ -317,13 +317,13 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
     };
   }
   
-  // 组合页
+  // 组合模式页
   if (pathname.startsWith("/dashboard/compositions")) {
     return {
-      title: "组合",
+      title: "组合模式",
       crumbs: [
         { label: "工作台", href: "/dashboard" },
-        { label: "组合" },
+        { label: "组合模式" },
       ],
     };
   }
@@ -387,10 +387,13 @@ function getRouteMeta(pathname: string, menuTree: MenuItem[]): {
     if (menuHref) {
       // 从菜单 code 推断菜单名称（简单映射）
       const menuNameMap: Record<string, string> = {
-        "menu:tenant:list": "租户管理",
-        "menu:prompts:list": "提示词管理",
-        "menu:compositions:list": "组合",
+        "menu:tenant:list": "租户信息",
+        "menu:prompts:list": "提示词",
+        "menu:compositions:list": "组合模式",
         "menu:rbac": "权限管理",
+        "menu:rbac:roles:list": "角色管理",
+        "menu:rbac:user_roles:list": "权限分配",
+        "menu:rbac:menus:list": "路由管理",
         "menu:config": "配置中心",
         "menu:config:scenes": "场景配置",
         "menu:config:placeholders": "占位符配置",

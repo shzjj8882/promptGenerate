@@ -2,10 +2,16 @@
 """
 多维表格管理相关路由
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, delete
-from typing import List, Optional
+from typing import Annotated, List, Optional
+
+# UUID 路径参数校验，非法格式返回 422 避免无效 DB 查询
+UUID_PATH = Annotated[
+    str,
+    Path(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+]
 from datetime import datetime
 import json
 import uuid
@@ -222,7 +228,7 @@ async def get_tables(
     summary="获取多维表格已完成历史记录（用于回滚）",
 )
 async def get_completed_history(
-    table_id: str,
+    table_id: UUID_PATH,
     limit: int = Query(50, ge=1, le=200, description="返回的最大记录数，按时间倒序"),
     current_user: UserResponse = Depends(require_tables_list_permission),
     db: AsyncSession = Depends(get_db),
@@ -256,7 +262,9 @@ async def get_completed_history(
     for item in items:
         try:
             snapshot_dict = json.loads(item.snapshot)
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("历史快照 JSON 解析失败，id=%s: %s", item.id, e)
             snapshot_dict = {}
         snapshot = HistoryStateSnapshot(**snapshot_dict) if snapshot_dict else HistoryStateSnapshot(rows=[], columns=[])
         data.append(
@@ -293,7 +301,7 @@ async def get_completed_history(
 
 @router.get("/multi-dimension-tables/{table_id}", summary="获取多维表格详情")
 async def get_table(
-    table_id: str,
+    table_id: UUID_PATH,
     include_rows: bool = Query(False, description="是否包含行数据"),
     current_user: UserResponse = Depends(require_tables_list_permission),
     db: AsyncSession = Depends(get_db),
@@ -569,7 +577,7 @@ async def create_table(
 
 @router.put("/multi-dimension-tables/{table_id}", summary="更新多维表格")
 async def update_table(
-    table_id: str,
+    table_id: UUID_PATH,
     table_data: MultiDimensionTableUpdate,
     current_user: UserResponse = Depends(require_tables_update_permission),
     db: AsyncSession = Depends(get_db),
@@ -870,8 +878,9 @@ async def update_table(
                 )
                 db.add(history)
                 await db.commit()
-            except Exception:
-                # 历史记录失败不影响主流程
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("保存历史记录失败，table_id=%s: %s", table_id, e)
                 await db.rollback()
     
     table_dict = {
@@ -902,7 +911,7 @@ async def update_table(
 
 @router.delete("/multi-dimension-tables/{table_id}", summary="删除多维表格")
 async def delete_table(
-    table_id: str,
+    table_id: UUID_PATH,
     current_user: UserResponse = Depends(require_tables_delete_permission),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1169,7 +1178,7 @@ async def delete_table_by_code(
 
 @router.get("/multi-dimension-tables/{table_id}/rows", summary="获取表格行列表")
 async def get_table_rows(
-    table_id: str,
+    table_id: UUID_PATH,
     team_id: Optional[str] = Query(None, description="团队 ID（可选，默认使用当前用户的团队）"),
     skip: int = Query(0, ge=0, description="跳过行数，用于分页"),
     limit: Optional[int] = Query(None, ge=1, le=1000, description="每页行数，不传则返回全部（大数据量时建议传 limit 分页）"),
@@ -1342,7 +1351,7 @@ async def get_table_rows_by_code(
 
 @router.post("/multi-dimension-tables/{table_id}/rows", status_code=status.HTTP_201_CREATED, summary="创建表格行")
 async def create_table_row(
-    table_id: str,
+    table_id: UUID_PATH,
     row_data: MultiDimensionTableRowCreate,
     current_user: UserResponse = Depends(require_tables_create_permission),
     db: AsyncSession = Depends(get_db),
@@ -1398,53 +1407,12 @@ async def create_table_row(
         max_row_id = -1 if max_val is None else max_val
         new_row_id = max_row_id + 1
     
-    # 验证数据格式
     columns = json.loads(table.columns) if table.columns else []
     column_keys = [col["key"] for col in columns]
-    column_map = {col["key"]: col for col in columns}
-    
-    # 验证单元格数据格式
-    validation_errors = []
-    for column_key, value in row_data.cells.items():
-        if column_key not in column_keys:
-            validation_errors.append(f"列 '{column_key}' 不存在于表格中")
-            continue
-        
-        column = column_map[column_key]
-        column_type = column.get("type", "text")
-        str_value = str(value) if value is not None else ""
-        
-        # 根据列类型验证数据格式
-        if column_type == "number":
-            try:
-                float(str_value) if str_value else None
-            except (ValueError, TypeError):
-                validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的数字")
-        elif column_type == "boolean":
-            if str_value.lower() not in ("true", "false", "1", "0", "yes", "no", ""):
-                validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的布尔值")
-        elif column_type == "date":
-            # 日期格式验证（可以根据需要扩展）
-            if value and not value.strip():
-                pass  # 空值允许
-        elif column_type in ("single_select", "multi_select"):
-            options = column.get("options", {}).get("options", [])
-            if options and value:
-                if column_type == "single_select":
-                    if value not in options:
-                        validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不在选项列表中")
-                elif column_type == "multi_select":
-                    values = [v.strip() for v in value.split(",") if v.strip()]
-                    invalid_values = [v for v in values if v not in options]
-                    if invalid_values:
-                        validation_errors.append(f"列 '{column_key}' 的值 '{', '.join(invalid_values)}' 不在选项列表中")
-    
-    if validation_errors:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="数据格式验证失败: " + "; ".join(validation_errors)
-        )
-    
+    from app.utils.table_row_validator import validate_row_data_for_columns
+
+    validate_row_data_for_columns(columns, row_data.cells)
+
     # 创建行
     new_row = MultiDimensionTableRow(
         table_id=table_id,
@@ -1504,7 +1472,7 @@ async def create_table_row(
 
 @router.post("/multi-dimension-tables/{table_id}/rows/query-by-conditions", summary="多条件查询表格行")
 async def query_table_rows_by_conditions(
-    table_id: str,
+    table_id: UUID_PATH,
     query_request: TableRowQueryByConditions,
     current_user: UserResponse = Depends(require_tables_list_permission),
     db: AsyncSession = Depends(get_db),
@@ -1685,45 +1653,10 @@ async def create_table_row_by_code(
     # 验证数据格式
     columns = json.loads(table.columns) if table.columns else []
     column_keys = [col["key"] for col in columns]
-    column_map = {col["key"]: col for col in columns}
-    
-    validation_errors = []
-    for column_key, value in row_data.cells.items():
-        if column_key not in column_keys:
-            validation_errors.append(f"列 '{column_key}' 不存在于表格中")
-            continue
-        
-        column = column_map[column_key]
-        column_type = column.get("type", "text")
-        
-        if column_type == "number":
-            try:
-                float(value) if value else None
-            except (ValueError, TypeError):
-                validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的数字")
-        elif column_type == "boolean":
-            if value.lower() not in ("true", "false", "1", "0", "yes", "no", ""):
-                validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的布尔值")
-        elif column_type == "date":
-            pass
-        elif column_type in ("single_select", "multi_select"):
-            options = column.get("options", {}).get("options", [])
-            if options and value:
-                if column_type == "single_select":
-                    if value not in options:
-                        validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不在选项列表中")
-                elif column_type == "multi_select":
-                    values = [v.strip() for v in value.split(",") if v.strip()]
-                    invalid_values = [v for v in values if v not in options]
-                    if invalid_values:
-                        validation_errors.append(f"列 '{column_key}' 的值 '{', '.join(invalid_values)}' 不在选项列表中")
-    
-    if validation_errors:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="数据格式验证失败: " + "; ".join(validation_errors)
-        )
-    
+    from app.utils.table_row_validator import validate_row_data_for_columns
+
+    validate_row_data_for_columns(columns, row_data.cells)
+
     new_row = MultiDimensionTableRow(
         table_id=table_id,
         row_id=new_row_id,
@@ -1781,7 +1714,7 @@ async def create_table_row_by_code(
 # 注意：/rows/by-condition 和 /rows/bulk 必须放在 /rows/{row_id} 之前，否则 "by-condition"/"bulk" 会被当作 row_id 匹配导致 404
 @router.put("/multi-dimension-tables/{table_id}/rows/by-condition", summary="根据条件更新表格行")
 async def update_table_row_by_condition(
-    table_id: str,
+    table_id: UUID_PATH,
     update_request: TableRowUpdateByCondition,
     current_user: UserResponse = Depends(require_tables_update_permission),
     db: AsyncSession = Depends(get_db),
@@ -1863,44 +1796,11 @@ async def update_table_row_by_condition(
     
     columns = json.loads(table.columns) if table.columns else []
     column_keys = [col["key"] for col in columns]
-    column_map = {col["key"]: col for col in columns}
-    
     if update_request.cells:
-        validation_errors = []
-        for column_key, value in update_request.cells.items():
-            if column_key not in column_map:
-                validation_errors.append(f"列 '{column_key}' 不存在于表格中")
-                continue
-            
-            column = column_map[column_key]
-            column_type = column.get("type", "text")
-            
-            if column_type == "number":
-                try:
-                    float(value) if value else None
-                except (ValueError, TypeError):
-                    validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的数字")
-            elif column_type == "boolean":
-                if value.lower() not in ("true", "false", "1", "0", "yes", "no", ""):
-                    validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的布尔值")
-            elif column_type in ("single_select", "multi_select"):
-                options = column.get("options", {}).get("options", [])
-                if options and value:
-                    if column_type == "single_select":
-                        if value not in options:
-                            validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不在选项列表中")
-                    elif column_type == "multi_select":
-                        values = [v.strip() for v in value.split(",") if v.strip()]
-                        invalid_values = [v for v in values if v not in options]
-                        if invalid_values:
-                            validation_errors.append(f"列 '{column_key}' 的值 '{', '.join(invalid_values)}' 不在选项列表中")
-        
-        if validation_errors:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="数据格式验证失败: " + "; ".join(validation_errors)
-            )
-    
+        from app.utils.table_row_validator import validate_row_data_for_columns
+
+        validate_row_data_for_columns(columns, update_request.cells)
+
     updated_count = 0
     updated_row_ids = []
     for row in rows:
@@ -1954,8 +1854,8 @@ async def update_table_row_by_condition(
 
 @router.put("/multi-dimension-tables/{table_id}/rows/{row_id}", summary="更新表格行")
 async def update_table_row(
-    table_id: str,
-    row_id: str,
+    table_id: UUID_PATH,
+    row_id: UUID_PATH,
     row_data: MultiDimensionTableRowUpdate,
     current_user: UserResponse = Depends(require_tables_update_permission),
     db: AsyncSession = Depends(get_db),
@@ -2041,7 +1941,7 @@ async def update_table_row(
 @router.put("/multi-dimension-tables/by-code/{table_code}/rows/{row_id}", summary="通过 code 更新表格行")
 async def update_table_row_by_code(
     table_code: str,
-    row_id: str,
+    row_id: UUID_PATH,
     row_data: MultiDimensionTableRowUpdate,
     current_user: UserResponse = Depends(require_tables_update_permission),
     db: AsyncSession = Depends(get_db),
@@ -2127,7 +2027,7 @@ async def update_table_row_by_code(
 
 @router.delete("/multi-dimension-tables/{table_id}/rows/by-condition", summary="根据条件删除表格行")
 async def delete_table_row_by_condition(
-    table_id: str,
+    table_id: UUID_PATH,
     delete_request: TableRowDeleteByCondition,
     current_user: UserResponse = Depends(require_tables_delete_permission),
     db: AsyncSession = Depends(get_db),
@@ -2326,8 +2226,8 @@ async def delete_table_row_by_condition_by_code(
 
 @router.delete("/multi-dimension-tables/{table_id}/rows/{row_id}", summary="删除表格行")
 async def delete_table_row(
-    table_id: str,
-    row_id: str,
+    table_id: UUID_PATH,
+    row_id: UUID_PATH,
     current_user: UserResponse = Depends(require_tables_delete_permission),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2356,7 +2256,7 @@ async def delete_table_row(
 @router.delete("/multi-dimension-tables/by-code/{table_code}/rows/{row_id}", summary="通过 code 删除表格行")
 async def delete_table_row_by_code(
     table_code: str,
-    row_id: str,
+    row_id: UUID_PATH,
     current_user: UserResponse = Depends(require_tables_delete_permission),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2458,47 +2358,11 @@ async def update_table_row_by_condition_by_code(
             detail=f"未找到满足条件的行"
         )
     
-    # 验证更新的单元格数据格式
-    columns = json.loads(table.columns) if table.columns else []
-    column_keys = [col["key"] for col in columns]
-    column_map = {col["key"]: col for col in columns}
-    
     if update_request.cells:
-        validation_errors = []
-        for column_key, value in update_request.cells.items():
-            if column_key not in column_map:
-                validation_errors.append(f"列 '{column_key}' 不存在于表格中")
-                continue
-            
-            column = column_map[column_key]
-            column_type = column.get("type", "text")
-            
-            if column_type == "number":
-                try:
-                    float(value) if value else None
-                except (ValueError, TypeError):
-                    validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的数字")
-            elif column_type == "boolean":
-                if value.lower() not in ("true", "false", "1", "0", "yes", "no", ""):
-                    validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不是有效的布尔值")
-            elif column_type in ("single_select", "multi_select"):
-                options = column.get("options", {}).get("options", [])
-                if options and value:
-                    if column_type == "single_select":
-                        if value not in options:
-                            validation_errors.append(f"列 '{column_key}' 的值 '{value}' 不在选项列表中")
-                    elif column_type == "multi_select":
-                        values = [v.strip() for v in value.split(",") if v.strip()]
-                        invalid_values = [v for v in values if v not in options]
-                        if invalid_values:
-                            validation_errors.append(f"列 '{column_key}' 的值 '{', '.join(invalid_values)}' 不在选项列表中")
-        
-        if validation_errors:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="数据格式验证失败: " + "; ".join(validation_errors)
-            )
-    
+        from app.utils.table_row_validator import validate_row_data_for_columns
+
+        validate_row_data_for_columns(columns, update_request.cells)
+
     updated_count = 0
     updated_row_ids = []
     for row in rows:
@@ -2554,7 +2418,7 @@ async def update_table_row_by_condition_by_code(
 
 @router.put("/multi-dimension-tables/{table_id}/rows/bulk", summary="批量保存表格行")
 async def bulk_save_table_rows(
-    table_id: str,
+    table_id: UUID_PATH,
     bulk_data: TableRowsBulkSave,
     current_user: UserResponse = Depends(require_tables_update_permission),
     db: AsyncSession = Depends(get_db),

@@ -23,25 +23,20 @@ import { Calendar } from "@/components/ui/calendar";
 import { ChevronDown, History } from "@/components/icons";
 import { getTeamPaymentLogs, type TeamPackageOverview } from "@/lib/api/teams";
 import type { MultiDimensionTable, TableRow } from "@/lib/api/multi-dimension-tables";
+import { formatYearMonthToDisplay } from "@/lib/utils/year-month";
 
 const TableCanvasView = dynamic(
   () => import("@/app/dashboard/config/tables/components").then((m) => ({ default: m.TableCanvasView })),
   { ssr: false }
 );
 
-type TokenAdjustmentType = "gift" | "purchase";
-interface TokenAdjustment {
+type PointsAdjustmentType = "gift" | "purchase";
+interface PointsAdjustment {
   id: string;
-  type: TokenAdjustmentType;
+  type: PointsAdjustmentType;
   amount: number;
   comment?: string;
   created_at: string;
-}
-
-function formatYearMonthToDisplay(ym: string): string {
-  if (!ym || ym.length < 7) return ym;
-  const m = parseInt(ym.slice(5, 7), 10);
-  return `${ym.slice(0, 4)}年${m}月1日`;
 }
 
 /** 签约/续约显示合约日期（实际操作日期）；解约显示被解约月份的合约日期（月份+签约日，如签约3月4日则解约3月=3月4日、解约4月=4月4日）；赠送、追加无合约日期显示 "-" */
@@ -103,7 +98,7 @@ interface QuotaHistoryDialogProps {
   onOpenChange: (open: boolean) => void;
   teamId?: string;
   teamName?: string;
-  localAdjustments: Record<string, TokenAdjustment[]>;
+  localAdjustments: Record<string, PointsAdjustment[]>;
   packageOverview: TeamPackageOverview | null;
 }
 
@@ -147,7 +142,7 @@ export function QuotaHistoryDialog({
         options: { options: ["赠送", "追加", "签约/续约", "解约"] },
       },
       { key: "year_month", label: "合约日期", type: "text" },
-      { key: "amount", label: "数量（Token/月数）", type: "number" },
+      { key: "amount", label: "数量（积点/月数）", type: "number" },
       { key: "comment", label: "备注说明", type: "text" },
       { key: "created_at", label: "操作时间", type: "text" },
     ],
@@ -280,9 +275,9 @@ export function QuotaHistoryDialog({
       .sort((a, b) => b.year_month.localeCompare(a.year_month))
       .map((m) => ({
         year_month: m.year_month,
-        tokens_used: m.tokens_used,
-        base_token_limit: m.base_token_limit,
-        rollover_from_prev_tokens: m.rollover_from_prev_tokens ?? 0,
+        points_used: m.points_used,
+        base_points_limit: m.base_points_limit,
+        rollover_from_prev_points: m.rollover_from_prev_points ?? 0,
       }));
   }, [packageOverview]);
 
@@ -299,7 +294,7 @@ export function QuotaHistoryDialog({
             历史记录
           </DialogTitle>
           <DialogDescription className="text-sm">
-            {teamName} - 缴费记录与 Token 用量
+            {teamName} - 缴费记录与积点用量
           </DialogDescription>
         </DialogHeader>
         <Tabs defaultValue="payment" className="flex-1 min-h-0 flex flex-col">
@@ -393,9 +388,9 @@ export function QuotaHistoryDialog({
                         {monthlyUsage.map((m) => (
                           <tr key={m.year_month} className="border-t">
                             <td className="py-1.5">{formatYearMonthToDisplay(m.year_month)}</td>
-                            <td className="text-right font-medium tabular-nums">{m.tokens_used}</td>
-                            <td className="text-right tabular-nums">{m.base_token_limit ?? "-"}</td>
-                            <td className="text-right tabular-nums">{m.rollover_from_prev_tokens}</td>
+                            <td className="text-right font-medium tabular-nums">{m.points_used}</td>
+                            <td className="text-right tabular-nums">{m.base_points_limit ?? "-"}</td>
+                            <td className="text-right tabular-nums">{m.rollover_from_prev_points}</td>
                             <td className="text-right">
                               <button
                                 type="button"

@@ -170,7 +170,7 @@ class ConversationService:
             if msg.meta_data:
                 try:
                     metadata = json.loads(msg.meta_data) if isinstance(msg.meta_data, str) else msg.meta_data
-                except:
+                except Exception:
                     pass
             
             result.append({

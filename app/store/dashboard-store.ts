@@ -74,22 +74,20 @@ function sanitizeLayout(items: LayoutItem[]) {
       if (item.tableChartCategoryColumnKey) extra.tableChartCategoryColumnKey = item.tableChartCategoryColumnKey;
       if (item.tableChartValueColumnKeys?.length) extra.tableChartValueColumnKeys = item.tableChartValueColumnKeys;
       if (item.tableChartPieAggregate) extra.tableChartPieAggregate = item.tableChartPieAggregate;
-      // 保留列宽配置（如果存在）
-      if ((item as any).tableColumnWidths) {
-        (extra as any).tableColumnWidths = (item as any).tableColumnWidths;
-      }
+      if (item.tableColumnWidths) extra.tableColumnWidths = item.tableColumnWidths;
       return { ...base, ...extra, minW: base.minW ?? 4, minH: base.minH ?? 2 };
     }
     // 团队 Code 组件：保留展示模式与卡片配置（单选）
     if (i.startsWith("team_code-")) {
       const extra: Partial<LayoutItem> = {};
-      if ((item as any).teamCodeDisplayMode) extra.teamCodeDisplayMode = (item as any).teamCodeDisplayMode;
-      const cards = (item as any).teamCodeUsageCards;
-      const card = (item as any).teamCodeUsageCard;
-      const chartType = (item as any).teamCodeChartType;
-      if (card) (extra as any).teamCodeUsageCard = card;
-      else if (Array.isArray(cards) && cards.length > 0) (extra as any).teamCodeUsageCard = cards[0]; // 迁移：数组取首项
-      if (chartType) (extra as any).teamCodeChartType = chartType;
+      const raw = item as LayoutItem & { teamCodeUsageCards?: string[] };
+      if (raw.teamCodeDisplayMode) extra.teamCodeDisplayMode = raw.teamCodeDisplayMode;
+      const cards = raw.teamCodeUsageCards;
+      const card = raw.teamCodeUsageCard;
+      const chartType = raw.teamCodeChartType;
+      if (card) extra.teamCodeUsageCard = card;
+      else if (Array.isArray(cards) && cards.length > 0) extra.teamCodeUsageCard = cards[0] as "package" | "extra" | "rollover"; // 迁移：数组取首项
+      if (chartType) extra.teamCodeChartType = chartType;
       if (Object.keys(extra).length) return { ...base, ...extra, minW: base.minW ?? 4, minH: base.minH ?? 2 };
     }
     if (i.startsWith("prompts-")) {
@@ -106,7 +104,7 @@ function sanitizeLayout(items: LayoutItem[]) {
 function layoutEquals(a: LayoutItem[], b: LayoutItem[]): boolean {
   if (a.length !== b.length) return false;
   const key = (item: LayoutItem) =>
-    `${item.i}:${item.x},${item.y},${item.w},${item.h}:${item.minW ?? ""}:${item.minH ?? ""}:${item.tableId ?? ""}:${(item.columnKeys ?? []).join(",")}:${item.tableDisplayMode ?? ""}:${item.tableChartType ?? ""}:${item.tableChartCategoryColumnKey ?? ""}:${(item.tableChartValueColumnKeys ?? []).join(",")}:${item.tableChartPieAggregate ?? ""}:${JSON.stringify((item as any).tableColumnWidths ?? {})}:${(item as any).teamCodeDisplayMode ?? ""}:${(item as any).teamCodeUsageCard ?? ""}:${(item as any).teamCodeChartType ?? ""}`;
+    `${item.i}:${item.x},${item.y},${item.w},${item.h}:${item.minW ?? ""}:${item.minH ?? ""}:${item.tableId ?? ""}:${(item.columnKeys ?? []).join(",")}:${item.tableDisplayMode ?? ""}:${item.tableChartType ?? ""}:${item.tableChartCategoryColumnKey ?? ""}:${(item.tableChartValueColumnKeys ?? []).join(",")}:${item.tableChartPieAggregate ?? ""}:${JSON.stringify(item.tableColumnWidths ?? {})}:${item.teamCodeDisplayMode ?? ""}:${item.teamCodeUsageCard ?? ""}:${item.teamCodeChartType ?? ""}`;
   const setA = new Set(a.map(key));
   return b.every((item) => setA.has(key(item)));
 }
@@ -221,10 +219,10 @@ class DashboardStore {
         tableChartCategoryColumnKey: newItem.tableChartCategoryColumnKey ?? existing.tableChartCategoryColumnKey,
         tableChartValueColumnKeys: newItem.tableChartValueColumnKeys ?? existing.tableChartValueColumnKeys,
         tableChartPieAggregate: newItem.tableChartPieAggregate ?? existing.tableChartPieAggregate,
-        tableColumnWidths: (newItem as any).tableColumnWidths ?? (existing as any).tableColumnWidths,
-        teamCodeDisplayMode: (newItem as any).teamCodeDisplayMode ?? (existing as any).teamCodeDisplayMode,
-        teamCodeUsageCard: (newItem as any).teamCodeUsageCard ?? (existing as any).teamCodeUsageCard,
-        teamCodeChartType: (newItem as any).teamCodeChartType ?? (existing as any).teamCodeChartType,
+        tableColumnWidths: newItem.tableColumnWidths ?? existing.tableColumnWidths,
+        teamCodeDisplayMode: newItem.teamCodeDisplayMode ?? existing.teamCodeDisplayMode,
+        teamCodeUsageCard: newItem.teamCodeUsageCard ?? existing.teamCodeUsageCard,
+        teamCodeChartType: newItem.teamCodeChartType ?? existing.teamCodeChartType,
       };
     });
     if (layoutEquals(this.layout, merged)) return;

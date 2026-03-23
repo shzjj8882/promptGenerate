@@ -96,7 +96,7 @@ export type AddColumnFormValues = z.infer<typeof addColumnFormSchema>;
 export type EditColumnFormValues = z.infer<typeof editColumnFormSchema>;
 
 /** 取 zod 错误的首条友好信息 */
-export function firstSchemaErrorMessage(result: z.SafeParseError<unknown>): string {
+export function firstSchemaErrorMessage(result: z.ZodSafeParseError<unknown>): string {
   const first = result.error.issues[0];
   return first?.message ?? "校验未通过";
 }
