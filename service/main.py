@@ -40,6 +40,8 @@ from app.models.user import User
 from app.core.security import get_password_hash
 from typing import Optional
 import logging
+import sys
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -223,9 +225,11 @@ async def global_exception_handler(request: Request, exc: Exception):
             exc,
         )
     except Exception as log_err:
-        import sys
         print(f"[FALLBACK] 未捕获异常 path={path} method={method}: {exc}", file=sys.stderr)
         print(f"[FALLBACK] 日志记录失败: {log_err}", file=sys.stderr)
+    # 始终写 stderr，避免仅配置 app logger 时 docker logs 看不到 500 根因
+    print(f"[ERROR] 未捕获异常 path={path} method={method}: {exc!r}", file=sys.stderr, flush=True)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
     response = ResponseModel.error_response(
         message="服务器内部错误",
         code=status.HTTP_500_INTERNAL_SERVER_ERROR
